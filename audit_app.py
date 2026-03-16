@@ -13,9 +13,9 @@ st.set_page_config(page_title="Аудит ИТ и ИБ 2026", layout="wide", pag
 if os.path.exists("logo.png"):
     st.image("logo.png", width=300)
 else:
-    st.title("Ivan Rudoy | IT Audit & Consulting")
+    st.title("Khalil Trade | IT Audit & Consulting")
 
-st.markdown("### 📞 **Хотите такой опросник — звоните!**")
+st.markdown("### Заполните пожайлуйста опросник")
 st.divider()
 
 st.title("📋 Опросник: Технический аудит ИТ и ИБ (2026)")
