@@ -86,7 +86,7 @@ else:
 
 # --- БЛОК 2: СЕТЬ ---
 st.header("Блок 2: Сетевая инфраструктура и Интернет")
-if st.toggle("Развернуть Блок 2 (Сеть)", key="net_block_toggle"):
+if st.toggle("Своя сетевая инфраструктура", key="net_block_toggle"):
     net_types = ["Оптика", "Радиорелейная", "Спутник", "4G/5G", "Starlink"]
     
     c_n1, c_n2 = st.columns(2)
@@ -111,7 +111,7 @@ if st.toggle("Развернуть Блок 2 (Сеть)", key="net_block_toggle
 
 # --- БЛОК 3: ИБ (С ПЕРЕКЛЮЧАТЕЛЕМ) ---
 st.header("Блок 3: Информационная Безопасность")
-if st.toggle("Развернуть Блок 3 (ИБ)", key="ib_block_main_toggle"):
+if st.toggle("Есть отдел Информационной безопасности", key="ib_block_main_toggle"):
     st.info("Отметьте внедренные системы и укажите их вендора:")
     ib_list = {
         "DLP (Защита от утечек)": 15,
@@ -142,7 +142,7 @@ if st.toggle("Развернуть Блок 3 (ИБ)", key="ib_block_main_toggle
 
 # --- БЛОК 4: WEB-РЕСУРСЫ ---
 st.header("Блок 4: Web-ресурсы")
-if st.toggle("Развернуть Блок 4 (Web)", key="web_block_toggle"):
+if st.toggle("Есть свои Web-ресурсы", key="web_block_toggle"):
     data['4.1. Хостинг'] = st.selectbox("Где размещены сайты:", ["Собственный ЦОД", "Облако (Казахстан)", "Облако (Мировое)", "Нет сайтов"], key="web_hosting")
     data['4.2. CMS'] = st.text_input("Используемые CMS (Bitrix, WP и т.д.):", key="web_cms")
     data['4.3. СУБД'] = st.multiselect("Используемые базы данных:", ["PostgreSQL", "MySQL", "MS SQL", "Oracle", "MongoDB"], key="web_db")
@@ -150,7 +150,7 @@ if st.toggle("Развернуть Блок 4 (Web)", key="web_block_toggle"):
 
 # --- БЛОК 5: РАЗРАБОТКА ---
 st.header("Блок 5: Разработка")
-if st.toggle("Развернуть Блок 5 (Разработка)", key="dev_block_toggle"):
+if st.toggle("Своя разработка", key="dev_block_toggle"):
     data['5.1. Разработчики'] = st.number_input("Количество разработчиков в штате:", min_value=0, key="dev_count")
     data['5.2. Стек'] = st.text_input("Основной стек технологий:", key="dev_stack")
     data['5.3. CI/CD'] = st.checkbox("Используется ли CI/CD?", key="dev_cicd")
