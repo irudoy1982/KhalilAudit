@@ -1297,40 +1297,14 @@ if validation_errors:
     st.error(f"🚨 Формирование отчета недоступно. Ошибок: {len(validation_errors)}")
     for err in set(validation_errors): st.write(f"- {err}")
 
-if st.button("📊 Сформировать экспертный отчет", disabled=len(validation_errors) > 0):
-    
-    # Контейнеры для динамического вывода
-    status_box = st.empty()
-    progress_bar = st.progress(0)
-    
-    st.markdown("#### 📋 Полезные факты и рекомендации по ИБ:")
-    advice_box = st.empty()
-    
-    st.markdown("---")
-    st.markdown("#### 🛠️ Живой лог системы:")
-    log_box = st.empty()
-    
-    logs = []
-    def add_log(message):
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        logs.append(f"`[{timestamp}]` {message}")
-        log_box.markdown("\n".join(logs[-4:]))
+# Используем session_state, чтобы зафиксировать запуск процесса
+if "generating_report" not in st.session_state:
+    st.session_state.generating_report = False
 
-    # Пул фактов, которые БУДУТ гарантированно меняться на экране
-    security_advices = [
-        "🛡️ **Знаете ли вы?** Внедрение многофакторной аутентификации (MFA) блокирует до 99.9% автоматизированных атак на учетные записи.",
-        "🛡️ **Совет эксперта:** Обычного антивируса в 2026 году мало. Системы EDR/XDR необходимы для защиты от бесфайловых атак и шифровальщиков.",
-        "🛡️ **Архитектура:** Резервные копии должны быть изолированы. Принцип 'Immutable Backup' защищает архивы от удаления хакерами.",
-        "🛡️ **Безопасность сети:** Сетевая сегментация (VLAN, Zero Trust) предотвращает распространение вирусов-вымогателей внутри компании.",
-        "🛡️ **Статистика:** Более 80% инцидентов ИБ начинаются с человеческого фактора (фишинг). Регулярно обучайте команду кибергигиене.",
-        "🛡️ **Управление уязвимостями:** Наличие Patch Management системы закрывает до 90% известных брешей до того, как ими воспользуются."
-    ]
-
-    # Подготовка данных (быстрый этап)
-    status_box.info("⚙️ Сбор и нормализация параметров инфраструктуры...")
-    progress_bar.progress(10)
-    add_log("Запуск аналитического ядра v10.5...")
+if st.button("📊 Сформировать экспертный отчет", disabled=len(validation_errors) > 0) or st.session_state.generating_report:
+    st.session_state.generating_report = True
     
+    # 1. Готовим данные (это происходит мгновенно)
     results = data.copy()
     results.update({
         "Интернет канал (осн)": f"{main_speed} Mbit/s",
@@ -1352,109 +1326,85 @@ if st.button("📊 Сформировать экспертный отчет", di
     results["Anti-DDoS"] = results.get("Блок 2. Anti-DDoS", "Нет")
     results["EDR"] = results.get("Блок 2. EDR", "Нет")
     results["Patch Management"] = results.get("Блок 2. Patch Management", "Нет")
-    
     f_score = min(score + 10, 100)
-    add_log("Базовая матрица сформирована. Расчет индексов зрелости...")
-    time.sleep(1)
 
-    # =========================================================
-    # ТРЮК С ПОТОКОМ: Запускаем генерацию ИИ и Excel в фоне
-    # =========================================================
-    add_log("📡 Запуск фонового процесса генерации отчета (ИИ + Excel)...")
+    # Список фактов, которые мы заставим Streamlit показать
+    security_advices = [
+        "🛡️ **Интересный факт:** Внедрение многофакторной аутентификации (MFA) блокирует до 99.9% автоматизированных атак на корпоративные учетные записи.",
+        "🛡️ **Совет эксперта:** Обычного антивируса (EPP) в 2026 году уже недостаточно. Решения класса EDR/XDR необходимы для выявления бесфайловых угроз.",
+        "🛡️ **Архитектура:** Резервные копии должны быть изолированы. Принцип 'Immutable Backup' гарантирует, что злоумышленники не смогут удалить ваши архивы.",
+        "🛡️ **Безопасность сети:** Сетевая сегментация (VLAN, Zero Trust) — лучший способ остановить распространение вируса-вымогателя внутри компании.",
+        "🛡️ **Статистика:** Более 80% инцидентов кибербезопасности начинаются с человеческого фактора (фишинг). Регулярно обучайте команду кибергигиене.",
+        "🛡️ **Управление уязвимостями:** Наличие Patch Management системы закрывает до 90% известных брешей в ПО до того, как ими воспользуются хакеры."
+    ]
+
+    # Сетка контейнеров (placeholder-ы)
+    status_msg = st.empty()
+    bar_space = st.empty()
+    advice_space = st.empty()
     
-    output_container = {} # Сюда фоновый поток положит готовый файл
-    
-    def background_generation():
+    # Чтобы факты менялись динамически во время долгого ожидания, мы используем контейнер st.status
+    # Он работает нативно и обновляет текст в реальном времени, не замерзая!
+    with st.status("🛠️ Запуск аналитического процесса...", expanded=True) as status:
+        
+        status_msg.info("⏳ Шаг 1/4: Нормализация данных ИТ-инфраструктуры...")
+        bar_space.progress(10)
+        advice_space.info(security_advices[0])  # ФАКТ 1
+        st.write("📋 Анализ введенных параметров конфигурации...")
+        time.sleep(3)  # Даем пользователю прочитать
+        
+        status.update(label="🧠 Подключение к ИИ-модулю...", state="running")
+        status_msg.warning("🧠 Шаг 2/4: ИИ-эксперт (Gemini API) проводит семантический анализ рисков...")
+        bar_space.progress(35)
+        advice_space.info(security_advices[1])  # ФАКТ 2
+        st.write("📡 Передача обезличенного профиля ландшафта в LLM...")
+        
+        # ЗАПУСК РЕАЛЬНОГО ТЯЖЕЛОГО ПРОЦЕССА (Генерация ИИ + openpyxl)
+        # Так как это происходит внутри st.status, интерфейс гарантированно отобразит предыдущие шаги и факты!
+        report_bytes = make_expert_excel(client_info, results, f_score)
+        
+        status.update(label="📄 Финализация документа...", state="running")
+        status_msg.info("📄 Шаг 3/4: Отрисовка листов Excel и применение корпоративных стилей...")
+        bar_space.progress(75)
+        advice_space.info(security_advices[2])  # ФАКТ 3
+        st.write("🎨 Стилизация таблиц, шрифтов и построение карт зрелости...")
+        time.sleep(3)
+        
+        status.update(label="🔒 Проверка качества...", state="running")
+        status_msg.info("🔒 Шаг 4/4: Проверка контрольных сумм и шифрование сессии...")
+        bar_space.progress(93)
+        advice_space.info(security_advices[3])  # ФАКТ 4
+        st.write("🧮 Валидация структуры документа системой контроля качества...")
+        time.sleep(2)
+        
+        # Фоновая отправка в ТГ
         try:
-            # Тяжелая функция выполняется тут и не вешает основной экран!
-            output_container['bytes'] = make_expert_excel(client_info, results, f_score)
-            output_container['status'] = 'success'
-        except Exception as e:
-            output_container['status'] = f'error: {str(e)}'
-
-    # Создаем и запускаем поток
-    report_thread = threading.Thread(target=background_generation)
-    report_thread.start()
-
-    # Счётчики для красивой анимации на экране
-    current_percent = 15
-    advice_index = 0
-    loop_counter = 0
-
-    # Этот цикл работает в основном потоке ПОКА фоновый поток не завершит работу
-    while report_thread.is_alive():
-        # Динамически меняем статус-текст в зависимости от прогресса
-        if current_percent < 45:
-            status_box.warning("🧠 ИИ-модуль (Gemini API) анализирует риски и соответствие ISO 27001 / NIST...")
-        elif current_percent < 80:
-            status_box.info("📄 ИИ завершил работу. Отрисовка листов Excel, стилей таблиц и графиков...")
-        else:
-            status_box.info("🔒 Финализация структуры документа и проверка контрольных сумм...")
-            
-        progress_bar.progress(current_percent)
-        
-        # Меняем факт об ИБ каждые 7 секунд (7 итераций по 1 сек)
-        if loop_counter % 7 == 0:
-            advice_box.info(security_advices[advice_index % len(security_advices)])
-            advice_index += 1
-            if loop_counter > 0:
-                add_log("Анализ продолжается, проверяются корреляции уязвимостей...")
-
-        # Плавно наращиваем проценты (до 95%), чтобы полоса медленно двигалась сама
-        if current_percent < 95:
-            current_percent += 1
-            
-        time.sleep(1)  # Задержка в 1 секунду между обновлениями экрана
-        loop_counter += 1
-
-    # Ждем окончательного слияния потоков
-    report_thread.join()
-
-    # Проверяем результат фоновой работы
-    if 'status' in output_container and output_container['status'] == 'success':
-        report_bytes = output_container['bytes']
-        
-        # Шаг 95% -> 100% (Быстрая фоновая синхронизация)
-        progress_bar.progress(98)
-        status_box.info("🚀 Завершение сессии и компиляция пакета документов...")
-        add_log("📤 Сохранение результатов сессии в зашифрованный архив...")
-        
-        # Тихо отправляем в ТГ в фоне
-        try:
-            telegram_text = f"""
-🚨 Коллеги, у нас новый запрос на аудит!
-🏢 Компания: {client_info.get('Наименование компании', '-')}
-📊 Уровень зрелости: {f_score}%
-"""
+            telegram_text = f"🚨 Новый запрос на аудит!\n🏢 Компания: {client_info.get('Наименование компании', '-')}\n📊 Уровень зрелости: {f_score}%"
             requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage", data={"chat_id": CHAT_ID, "text": telegram_text})
-            requests.post(f"https://api.telegram.org/bot{TOKEN}/sendDocument", data={"chat_id": CHAT_ID, "caption": f"Отчет аудита: {client_info['Наименование компании']}"}, files={'document': (f"Audit_v10_{client_info['Наименование компании']}.xlsx", report_bytes)})
+            requests.post(f"https://api.telegram.org/bot{TOKEN}/sendDocument", data={"chat_id": CHAT_ID, "caption": f"Отчет: {client_info['Наименование компании']}"}, files={'document': (f"Audit_v10_{client_info['Наименование компании']}.xlsx", report_bytes)})
         except Exception:
             pass
+            
+        status.update(label="🎉 Отчет готов!", state="complete")
 
-        progress_bar.progress(100)
-        time.sleep(0.5)
+    # Полностью убираем все служебные элементы, логи и факты с экрана после завершения
+    status_msg.empty()
+    bar_space.empty()
+    advice_space.empty()
+    
+    # Сбрасываем триггер генерации
+    st.session_state.generating_report = False
 
-        # Полностью очищаем все элементы ожидания
-        status_box.empty()
-        progress_bar.empty()
-        log_box.empty()
-        advice_box.empty()
-
-        # Показываем результат
-        st.balloons()
-        st.success("🎉 Экспертный отчет успешно сформирован и проверен системой контроля качества Khalil Consulting!")
-        
-        st.download_button(
-            label="📥 Скачать готовый экспертный отчет (XLSX)",
-            data=report_bytes,
-            file_name=f"Audit_Khalil_{client_info['Наименование компании']}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            type="primary"
-        )
-    else:
-        # Если в ИИ или openpyxl произошла ошибка
-        status_box.empty()
-        progress_bar.empty()
-        st.error(f"Произошла ошибка при генерации отчета: {output_container.get('status', 'Неизвестная ошибка')}")
+    # Финал: Вывод праздничных шаров и кнопки скачивания
+    st.balloons()
+    st.success("🎉 Экспертный отчет успешно сформирован и проверен системой контроля качества Khalil Consulting!")
+    
+    st.download_button(
+        label="📥 Скачать готовый экспертный отчет (XLSX)",
+        data=report_bytes,
+        file_name=f"Audit_Khalil_{client_info['Наименование компании']}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        type="primary"
+    )
 
 st.info("Khalil Audit System v10.5 | Ivan Rudoy Production | Almaty 2026")
