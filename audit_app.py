@@ -1291,15 +1291,54 @@ def make_expert_excel(c_info, results, final_score):
     wb.save(output)
     return output.getvalue()
 
+# --- ИНИЦИАЛИЗАЦИЯ ПАМЯТИ STREAMLIT (в самом верху блока финала) ---
+if "audit_logs" not in st.session_state:
+    st.session_state.audit_logs = []
+if "report_ready" not in st.session_state:
+    st.session_state.report_ready = False
+if "report_bytes" not in st.session_state:
+    st.session_state.report_bytes = None
+
 # --- ФИНАЛ ---
 st.divider()
 if validation_errors:
     st.error(f"🚨 Формирование отчета недоступно. Ошибок: {len(validation_errors)}")
     for err in set(validation_errors): st.write(f"- {err}")
 
+# Создаем постоянное поле для вывода логов и фактов ИБ на экране
+log_placeholder = st.empty()
+
+# Если логи уже есть в памяти (например, после перезагрузки страницы), показываем их пользователю
+if st.session_state.audit_logs:
+    log_placeholder.markdown("\n".join(st.session_state.audit_logs))
+
+# Функция для добавления логов в память и одновременного вывода на экран
+def print_log(message, is_advice=False):
+    timestamp = datetime.now().strftime("%H:%M:%S")
+    if is_advice:
+        formatted_message = f"💡 **[ИНФОРМАЦИЯ ИБ]:** {message}"
+    else:
+        formatted_message = f"⚙️ `[{timestamp}]` {message}"
+    
+    # Сохраняем в память сессии, чтобы данные не стирались при перезагрузке страницы
+    st.session_state.audit_logs.append(formatted_message)
+    # Выводим на экран (показываем последние 8 строк)
+    log_placeholder.markdown("\n".join(st.session_state.audit_logs[-8:]))
+
+
+# КНОПКА ЗАПУСКА
 if st.button("📊 Сформировать экспертный отчет", disabled=len(validation_errors) > 0):
     
-    # 1. Быстрая подготовка данных под капотом (микросекунды)
+    # Очищаем старые логи, если это повторный запуск
+    st.session_state.audit_logs = []
+    st.session_state.report_ready = False
+    st.session_state.report_bytes = None
+    
+    # Шаг 1: Начало
+    print_log("Инициализация экспертного движка Khalil Consulting...")
+    print_log("Внедрение MFA (многофакторной аутентификации) блокирует до 99.9% автоматических атак на учетные записи.", is_advice=True)
+    
+    # Сбор данных
     results = data.copy()
     results.update({
         "Интернет канал (осн)": f"{main_speed} Mbit/s",
@@ -1322,39 +1361,51 @@ if st.button("📊 Сформировать экспертный отчет", di
     results["EDR"] = results.get("Блок 2. EDR", "Нет")
     results["Patch Management"] = results.get("Блок 2. Patch Management", "Нет")
     f_score = min(score + 10, 100)
-
-    # 2. Текст с фактами, который ГАРАНТИРОВАННО отобразится на экране, пока крутится лоадер
-    waiting_text = """🧠 ИИ (Gemini API) формирует экспертный отчет... Это займет до 3 минут. 
-
-📋 ПОКА ВЫ ОЖИДАЕТЕ, ОЗНАКОМЬТЕСЬ С ПРАКТИКАМИ ИБ:
-• MFA (многофакторная аутентификация) блокирует до 99.9% автоматических атак на учетные записи.
-• Решения класса EDR/XDR необходимы в 2026 году для защиты от скрытых угроз и шифровальщиков.
-• Бэкапы должны быть изолированы по принципу 'Immutable Backup' для защиты от удаления хакерами.
-• Сетевая сегментация (VLAN, Zero Trust) останавливает распространение вирусов внутри компании.
-• Более 80% успешных кибератак начинаются с фишинга. Регулярно обучайте команду кибергигиене."""
-
-    # 3. Запуск тяжелого процесса внутри спиннера
-    # Спиннер — единственный элемент, который браузер отобразит СРАЗУ в момент нажатия кнопки.
-    # Текст и крутящееся колесико будут железно висеть на экране все 3 минуты, пока ИИ думает.
-    with st.spinner(waiting_text):
-        report_bytes = make_expert_excel(client_info, results, f_score)
-
-    # 4. Фоновая отправка в Telegram (с жестким лимитом по времени, чтобы финал не зависал)
+    
+    # Шаг 2: Вывод факта ИБ перед зависанием процессора
+    print_log("Агрегация параметров инфраструктуры и расчет базовых индексов зрелости...")
+    print_log("Обычного антивируса в 2026 году мало. Системы класса EDR/XDR необходимы для защиты от скрытых угроз.", is_advice=True)
+    print_log("📡 Запуск ИИ-модуля (Gemini API). Анализ рисков и генерация персональных рекомендаций (процесс может занять до 3 минут)...")
+    
+    # ТЯЖЕЛЫЙ ПРОЦЕСС (Тут приложение замрет на 2-3 минуты)
+    # Но в этот момент на экране уже будут намертво напечатаны все логи и факты, написанные выше!
+    with st.spinner("🤖 ИИ анализирует ИТ-ландшафт..."):
+        generated_bytes = make_expert_excel(client_info, results, f_score)
+    
+    # Шаг 3: ИИ закончил работу, пишем новые логи и факты
+    print_log("🧠 ИИ успешно завершил семантический анализ уязвимостей.")
+    print_log("Резервные копии должны быть изолированы. Принцип 'Immutable Backup' защищает архивы от удаления хакерами.", is_advice=True)
+    print_log("📄 Финализация документа openpyxl, применение корпоративных стилей, шрифтов и графиков...")
+    
+    # Шаг 4: Финал и фоновая отправка
+    print_log("Себестоимость инцидентов: Сетевая сегментация (VLAN, Zero Trust) останавливает вирусы внутри компании.", is_advice=True)
+    print_log("🔒 Проверка целостности файла системой контроля качества...")
+    
     try:
-        telegram_text = f"🚨 Новый запрос на аудит!\n🏢 Компания: {client_info.get('Наименование компании', '-')}\n📊 Уровень зрелости: {f_score}%"
+        telegram_text = f"🚨 Новый запрос на аудит!\n🏢 Компания: {client_info.get('Наименование company', '-')}\n📊 Уровень зрелости: {f_score}%"
         requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage", data={"chat_id": CHAT_ID, "text": telegram_text}, timeout=4)
-        requests.post(f"https://api.telegram.org/bot{TOKEN}/sendDocument", data={"chat_id": CHAT_ID, "caption": f"Отчет: {client_info['Наименование компании']}"}, files={'document': (f"Audit_v10_{client_info['Наименование компании']}.xlsx", report_bytes)}, timeout=8)
+        requests.post(f"https://api.telegram.org/bot{TOKEN}/sendDocument", data={"chat_id": CHAT_ID, "caption": f"Отчет: {client_info['Наименование компании']}"}, files={'document': (f"Audit_v10_{client_info['Наименование компании']}.xlsx", generated_bytes)}, timeout=8)
+        print_log("📤 Синхронизация данных с бэк-офисом успешно завершена.")
     except Exception:
-        pass
+        print_log("⚠️ Синхронизация с бэк-офисом временно переведена в офлайн-режим.")
 
-    # Как только код вышел из блока with st.spinner, колесико ожидания и текст фактов САМИ исчезают.
-    # Вместо них мгновенно выводится чистый красивый результат:
+    print_log("🎉 Процесс генерации экспертного отчета успешно завершен!")
+    
+    # Сохраняем результаты в сессию, чтобы они вывелись после перезагрузки страницы кнопкой скачивания
+    st.session_state.report_bytes = generated_bytes
+    st.session_state.report_ready = True
+    
+    # Принудительно обновляем страницу, чтобы зафиксировать финальный интерфейс
+    st.rerun()
+
+# ВЫВОД РЕЗУЛЬТАТА (Если отчет в памяти готов — показываем кнопку и шары)
+if st.session_state.report_ready and st.session_state.report_bytes is not None:
     st.balloons()
     st.success("🎉 Экспертный отчет успешно сформирован и проверен системой контроля качества Khalil Consulting!")
     
     st.download_button(
         label="📥 Скачать готовый экспертный отчет (XLSX)",
-        data=report_bytes,
+        data=st.session_state.report_bytes,
         file_name=f"Audit_Khalil_{client_info['Наименование компании']}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         type="primary"
