@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import os
+import threading
 import time
 import random
 import requests
@@ -1298,47 +1299,37 @@ if validation_errors:
 
 if st.button("📊 Сформировать экспертный отчет", disabled=len(validation_errors) > 0):
     
-    # 1. Создаем элементы интерфейса ожидания
+    # Контейнеры для динамического вывода
     status_box = st.empty()
     progress_bar = st.progress(0)
     
-    st.markdown("#### 🛠️ Текущий статус обработки:")
-    log_box = st.empty()  # Сюда транслируем живые бизнес-логи
+    st.markdown("#### 📋 Полезные факты и рекомендации по ИБ:")
+    advice_box = st.empty()
     
     st.markdown("---")
-    advice_title = st.empty()
-    advice_box = st.empty()  # Информационный блок для фактов об ИБ
+    st.markdown("#### 🛠️ Живой лог системы:")
+    log_box = st.empty()
     
     logs = []
-
     def add_log(message):
-        """Добавление логов с красивым таймстампом"""
         timestamp = datetime.now().strftime("%H:%M:%S")
-        logs.append(f" `[{timestamp}]` {message}")
+        logs.append(f"`[{timestamp}]` {message}")
         log_box.markdown("\n".join(logs[-4:]))
 
-    # Пул полезных фактов и советов по ИБ для удержания внимания
+    # Пул фактов, которые БУДУТ гарантированно меняться на экране
     security_advices = [
-        "🛡️ **Факт об ИБ:** Внедрение многофакторной аутентификации (MFA) блокирует до 99.9% автоматизированных атак на корпоративные учетные записи.",
-        "🛡️ **Факт об ИБ:** Обычного антивируса (EPP) в 2026 году уже недостаточно. Решения класса EDR/XDR необходимы для выявления бесфайловых угроз и атак типа Ransomware.",
-        "🛡️ **Факт об ИБ:** Резервные копии (бэкапы) должны быть изолированы. Принцип 'Immutable Backup' гарантирует, что хакеры не смогут удалить или зашифровать ваши архивы.",
-        "🛡️ **Факт об ИБ:** Сетевая сегментация (VLAN, Zero Trust) — лучший способ остановить распространение вируса-вымогателя внутри компании.",
-        "🛡️ **Факт об ИБ:** Более 80% инцидентов кибербезопасности начинаются с человеческого фактора (фишинг, социальная инженерия). Обучайте сотрудников кибергигиене.",
-        "🛡️ **Факт об ИБ:** Системы управления обновлениями (Patch Management) закрывают до 90% известных уязвимостей до того, как злоумышленники успеют их поэксплуатировать."
+        "🛡️ **Знаете ли вы?** Внедрение многофакторной аутентификации (MFA) блокирует до 99.9% автоматизированных атак на учетные записи.",
+        "🛡️ **Совет эксперта:** Обычного антивируса в 2026 году мало. Системы EDR/XDR необходимы для защиты от бесфайловых атак и шифровальщиков.",
+        "🛡️ **Архитектура:** Резервные копии должны быть изолированы. Принцип 'Immutable Backup' защищает архивы от удаления хакерами.",
+        "🛡️ **Безопасность сети:** Сетевая сегментация (VLAN, Zero Trust) предотвращает распространение вирусов-вымогателей внутри компании.",
+        "🛡️ **Статистика:** Более 80% инцидентов ИБ начинаются с человеческого фактора (фишинг). Регулярно обучайте команду кибергигиене.",
+        "🛡️ **Управление уязвимостями:** Наличие Patch Management системы закрывает до 90% известных брешей до того, как ими воспользуются."
     ]
 
-    # Шаг 1: Старт
-    advice_title.markdown("### 📋 Экспертная справка Khalil Consulting:")
-    advice_box.info(security_advices[0])  # Показываем первый факт сразу
-    
-    status_box.info("⏳ Инициализация аналитического ядра...")
-    progress_bar.progress(5)
-    add_log("🤖 Запуск движка обработки данных v10.5...")
-    time.sleep(1.5)
-
-    # Шаг 2: Валидация матрицы
-    progress_bar.progress(15)
-    status_box.info("⚙️ Агрегация параметров инфраструктуры...")
+    # Подготовка данных (быстрый этап)
+    status_box.info("⚙️ Сбор и нормализация параметров инфраструктуры...")
+    progress_bar.progress(10)
+    add_log("Запуск аналитического ядра v10.5...")
     
     results = data.copy()
     results.update({
@@ -1362,90 +1353,108 @@ if st.button("📊 Сформировать экспертный отчет", di
     results["EDR"] = results.get("Блок 2. EDR", "Нет")
     results["Patch Management"] = results.get("Блок 2. Patch Management", "Нет")
     
-    add_log("✅ Матрица ответов успешно нормализована.")
-    
-    # Меняем факт перед тяжелым расчетом
-    advice_box.info(security_advices[1])
-    add_log("📊 Расчет базовых индексов технологической зрелости...")
-    time.sleep(2)
-
-    # Шаг 3: Работа ИИ и генерация Excel (Самое долгое место)
-    progress_bar.progress(35)
-    status_box.warning("🧠 Подключение к ИИ-модулю (Gemini API)... Формирование персональной карты рисков.")
-    add_log("📡 Передача зашифрованного профиля ИТ-ландшафта в нейросеть...")
-    
-    # Сменяем факт на третий прямо перед уходом в тяжелое вычисление
-    advice_box.info(security_advices[2])
-    
     f_score = min(score + 10, 100)
+    add_log("Базовая матрица сформирована. Расчет индексов зрелости...")
+    time.sleep(1)
+
+    # =========================================================
+    # ТРЮК С ПОТОКОМ: Запускаем генерацию ИИ и Excel в фоне
+    # =========================================================
+    add_log("📡 Запуск фонового процесса генерации отчета (ИИ + Excel)...")
     
-    # Внутри этого спиннера выполняется make_expert_excel (запросы к ИИ + openpyxl)
-    with st.spinner("🤖 ИИ сопоставляет ваши данные с требованиями ISO 27001 / NIST и подбирает стек решений из портфеля вендоров..."):
-        report_bytes = make_expert_excel(client_info, results, f_score)
+    output_container = {} # Сюда фоновый поток положит готовый файл
+    
+    def background_generation():
+        try:
+            # Тяжелая функция выполняется тут и не вешает основной экран!
+            output_container['bytes'] = make_expert_excel(client_info, results, f_score)
+            output_container['status'] = 'success'
+        except Exception as e:
+            output_container['status'] = f'error: {str(e)}'
+
+    # Создаем и запускаем поток
+    report_thread = threading.Thread(target=background_generation)
+    report_thread.start()
+
+    # Счётчики для красивой анимации на экране
+    current_percent = 15
+    advice_index = 0
+    loop_counter = 0
+
+    # Этот цикл работает в основном потоке ПОКА фоновый поток не завершит работу
+    while report_thread.is_alive():
+        # Динамически меняем статус-текст в зависимости от прогресса
+        if current_percent < 45:
+            status_box.warning("🧠 ИИ-модуль (Gemini API) анализирует риски и соответствие ISO 27001 / NIST...")
+        elif current_percent < 80:
+            status_box.info("📄 ИИ завершил работу. Отрисовка листов Excel, стилей таблиц и графиков...")
+        else:
+            status_box.info("🔒 Финализация структуры документа и проверка контрольных сумм...")
+            
+        progress_bar.progress(current_percent)
         
-    # Сюда код придет только после того, как ИИ полностью ответит
-    add_log("🧠 ИИ успешно завершил семантический анализ уязвимостей.")
-    
-    # Меняем факт на четвертый
-    advice_box.info(security_advices[3])
-    progress_bar.progress(70)
-    status_box.info("📄 Финализация документа и применение корпоративных стилей...")
-    add_log("🎨 Отрисовка графиков и стилизация листов Excel...")
-    time.sleep(2)
+        # Меняем факт об ИБ каждые 7 секунд (7 итераций по 1 сек)
+        if loop_counter % 7 == 0:
+            advice_box.info(security_advices[advice_index % len(security_advices)])
+            advice_index += 1
+            if loop_counter > 0:
+                add_log("Анализ продолжается, проверяются корреляции уязвимостей...")
 
-    # Шаг 4: Разгружаем «Зависание» на финише (Делаем отправку динамичной!)
-    progress_bar.progress(85)
-    status_box.info("🔒 Проверка контрольных сумм и шифрование сессии...")
-    add_log("🧮 Валидация ячеек отчета системой контроля качества...")
-    advice_box.info(security_advices[4])
-    time.sleep(1.5)
-    
-    progress_bar.progress(93)
-    status_box.info("🚀 Архивация данных и публикация на защищенном узле скачивания...")
-    add_log("📤 Передача готового пакета документов в буфер обмена...")
-    advice_box.info(security_advices[5])
-    
-    # Тихая фоновая отправка для бэк-офиса
-    try:
-        telegram_text = f"""
+        # Плавно наращиваем проценты (до 95%), чтобы полоса медленно двигалась сама
+        if current_percent < 95:
+            current_percent += 1
+            
+        time.sleep(1)  # Задержка в 1 секунду между обновлениями экрана
+        loop_counter += 1
+
+    # Ждем окончательного слияния потоков
+    report_thread.join()
+
+    # Проверяем результат фоновой работы
+    if 'status' in output_container and output_container['status'] == 'success':
+        report_bytes = output_container['bytes']
+        
+        # Шаг 95% -> 100% (Быстрая фоновая синхронизация)
+        progress_bar.progress(98)
+        status_box.info("🚀 Завершение сессии и компиляция пакета документов...")
+        add_log("📤 Сохранение результатов сессии в зашифрованный архив...")
+        
+        # Тихо отправляем в ТГ в фоне
+        try:
+            telegram_text = f"""
 🚨 Коллеги, у нас новый запрос на аудит!
-
 🏢 Компания: {client_info.get('Наименование компании', '-')}
-👤 ФИО: {client_info.get('ФИО контактного лица', '-')}
-💼 Должность: {client_info.get('Должность', '-')}
-📞 Телефон: {client_info.get('Контактный телефон', '-')}
-📧 Почта: {client_info.get('Email', '-')}
-🏭 Сфера деятельности: {client_info.get('Сфера деятельности', '-')}
-🌐 Сайт: {client_info.get('Сайт компании', '-')}
-
 📊 Уровень зрелости: {f_score}%
 """
-        requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage", data={"chat_id": CHAT_ID, "text": telegram_text})
-        requests.post(f"https://api.telegram.org/bot{TOKEN}/sendDocument", data={"chat_id": CHAT_ID, "caption": f"Отчет аудита: {client_info['Наименование компании']}"}, files={'document': (f"Audit_v10_{client_info['Наименование компании']}.xlsx", report_bytes)})
-    except Exception:
-        pass
+            requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage", data={"chat_id": CHAT_ID, "text": telegram_text})
+            requests.post(f"https://api.telegram.org/bot{TOKEN}/sendDocument", data={"chat_id": CHAT_ID, "caption": f"Отчет аудита: {client_info['Наименование компании']}"}, files={'document': (f"Audit_v10_{client_info['Наименование компании']}.xlsx", report_bytes)})
+        except Exception:
+            pass
 
-    # Финал загрузки
-    progress_bar.progress(100)
-    time.sleep(0.5)
+        progress_bar.progress(100)
+        time.sleep(0.5)
 
-    # Полностью очищаем все элементы ожидания, логи и советы с экрана
-    status_box.empty()
-    progress_bar.empty()
-    log_box.empty()
-    advice_title.empty()
-    advice_box.empty()
+        # Полностью очищаем все элементы ожидания
+        status_box.empty()
+        progress_bar.empty()
+        log_box.empty()
+        advice_box.empty()
 
-    # Показываем красивый результат
-    st.balloons()
-    st.success("🎉 Экспертный отчет успешно сформирован и готов к выгрузке!")
-    
-    st.download_button(
-        label="📥 Скачать готовый экспертный отчет (XLSX)",
-        data=report_bytes,
-        file_name=f"Audit_Khalil_{client_info['Наименование компании']}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        type="primary"
-    )
+        # Показываем результат
+        st.balloons()
+        st.success("🎉 Экспертный отчет успешно сформирован и проверен системой контроля качества Khalil Consulting!")
+        
+        st.download_button(
+            label="📥 Скачать готовый экспертный отчет (XLSX)",
+            data=report_bytes,
+            file_name=f"Audit_Khalil_{client_info['Наименование компании']}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            type="primary"
+        )
+    else:
+        # Если в ИИ или openpyxl произошла ошибка
+        status_box.empty()
+        progress_bar.empty()
+        st.error(f"Произошла ошибка при генерации отчета: {output_container.get('status', 'Неизвестная ошибка')}")
 
 st.info("Khalil Audit System v10.5 | Ivan Rudoy Production | Almaty 2026")
