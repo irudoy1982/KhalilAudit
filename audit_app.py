@@ -1291,13 +1291,11 @@ def make_expert_excel(c_info, results, final_score):
     wb.save(output)
     return output.getvalue()
 
-# --- ИНИЦИАЛИЗАЦИЯ ПАМЯТИ STREAMLIT (в самом верху блока финала) ---
-if "audit_logs" not in st.session_state:
-    st.session_state.audit_logs = []
-if "report_ready" not in st.session_state:
-    st.session_state.report_ready = False
-if "report_bytes" not in st.session_state:
-    st.session_state.report_bytes = None
+# --- ИНИЦИАЛИЗАЦИЯ И СТЕК СОСТОЯНИЙ (в самом начале финального блока) ---
+if "generation_state" not in st.session_state:
+    st.session_state.generation_state = "idle"  # Может быть: idle, preparing, heavy_ai, finalized
+if "cached_report_bytes" not in st.session_state:
+    st.session_state.cached_report_bytes = None
 
 # --- ФИНАЛ ---
 st.divider()
@@ -1305,110 +1303,112 @@ if validation_errors:
     st.error(f"🚨 Формирование отчета недоступно. Ошибок: {len(validation_errors)}")
     for err in set(validation_errors): st.write(f"- {err}")
 
-# Создаем постоянное поле для вывода логов и фактов ИБ на экране
-log_placeholder = st.empty()
+# КНОПКА ЗАПУСКА ПРОЦЕССА
+# Она активна только тогда, когда процесс еще не запущен
+if st.session_state.generation_state == "idle":
+    if st.button("📊 Сформировать экспертный отчет", disabled=len(validation_errors) > 0):
+        # При клике мы просто меняем статус в памяти на "подготовка" и мгновенно перезапускаем страницу
+        st.session_state.generation_state = "preparing"
+        st.rerun()
 
-# Если логи уже есть в памяти (например, после перезагрузки страницы), показываем их пользователю
-if st.session_state.audit_logs:
-    log_placeholder.markdown("\n".join(st.session_state.audit_logs))
-
-# Функция для добавления логов в память и одновременного вывода на экран
-def print_log(message, is_advice=False):
-    timestamp = datetime.now().strftime("%H:%M:%S")
-    if is_advice:
-        formatted_message = f"💡 **[ИНФОРМАЦИЯ ИБ]:** {message}"
-    else:
-        formatted_message = f"⚙️ `[{timestamp}]` {message}"
+# --- СЦЕНАРИЙ 1: ЭКРАН ОЖИДАНИЯ С ФАКТАМИ ИБ (Показывается СРАЗУ же после клика) ---
+if st.session_state.generation_state == "preparing":
     
-    # Сохраняем в память сессии, чтобы данные не стирались при перезагрузке страницы
-    st.session_state.audit_logs.append(formatted_message)
-    # Выводим на экран (показываем последние 8 строк)
-    log_placeholder.markdown("\n".join(st.session_state.audit_logs[-8:]))
-
-
-# КНОПКА ЗАПУСКА
-if st.button("📊 Сформировать экспертный отчет", disabled=len(validation_errors) > 0):
+    # 1. Сразу жестко выводим на экран поле логов и факты информационной безопасности
+    st.markdown("#### 🛠️ Ход выполнения анализа:")
     
-    # Очищаем старые логи, если это повторный запуск
-    st.session_state.audit_logs = []
-    st.session_state.report_ready = False
-    st.session_state.report_bytes = None
+    # Имитируем лог-систему, как вы просили
+    st.info("⚙️ `[СИСТЕМА]`: Инициализация аналитического ядра Khalil Consulting v10.5...")
+    st.success("⚙️ `[МАТРИЦА]`: Агрегация параметров ИТ-инфраструктуры успешно завершена.")
     
-    # Шаг 1: Начало
-    print_log("Инициализация экспертного движка Khalil Consulting...")
-    print_log("Внедрение MFA (многофакторной аутентификации) блокирует до 99.9% автоматических атак на учетные записи.", is_advice=True)
+    st.markdown("---")
+    st.markdown("#### 📋 Полезные факты и рекомендации по ИБ:")
     
-    # Сбор данных
-    results = data.copy()
-    results.update({
-        "Интернет канал (осн)": f"{main_speed} Mbit/s",
-        "Резервный канал": f"{back_speed} Mbit/s",
-        "_main_speed": main_speed,
-        "_back_speed": back_speed,
-        "_user_count": total_arm,
-        "WiFi Точки": ap_cnt,
-        "WiFi Контроллер": data.get('Wi-Fi Контроллер', "Нет"),
-        "Маршрутизация": ", ".join(selected_routing) if selected_routing else "Нет",
-        "NGFW": ngfw_vendor if ngfw_vendor else "Нет",
-        "Серверы (физ)": phys_count,
-        "Серверы (вирт)": virt_count,
-        "Резервное копирование": v_n_b if v_n_b else "Нет",
-    })
-    results["MFA"] = results.get("Блок 2. MFA", "Нет")
-    results["SIEM"] = results.get("Блок 2. SIEM", "Нет")
-    results["WAF"] = results.get("Блок 2. WAF", "Нет")
-    results["Anti-DDoS"] = results.get("Блок 2. Anti-DDoS", "Нет")
-    results["EDR"] = results.get("Блок 2. EDR", "Нет")
-    results["Patch Management"] = results.get("Блок 2. Patch Management", "Нет")
-    f_score = min(score + 10, 100)
+    # Выводим на экран массив фактов в красивом поле, который пользователь будет читать все 3 минуты
+    st.warning("""
+💡 **Многофакторная аутентификация:** Внедрение MFA блокирует до 99.9% автоматизированных атак на корпоративные учетные записи.
+              
+💡 **Защита рабочих мест:** Обычного антивируса (EPP) в 2026 году уже недостаточно. Решения класса EDR/XDR критически необходимы для выявления скрытых бесфайловых угроз.
+              
+💡 **Безопасность архивов:** Резервные копии должны быть изолированы от основной сети. Принцип 'Immutable Backup' гарантирует, что хакеры-вымогатели не смогут зашифровать ваши бэкапы.
+              
+💡 **Сетевой периметр:** Сетевая сегментация (VLAN, концепция Zero Trust) — лучший способ остановить распространение шифровальщика внутри компании, если один компьютер уже заражен.
+              
+💡 **Человеческий фактор:** Более 80% успешных кибератак начинаются со скомпрометированного фишингового письма. Регулярно обучайте команду кибергигиене.
+    """)
     
-    # Шаг 2: Вывод факта ИБ перед зависанием процессора
-    print_log("Агрегация параметров инфраструктуры и расчет базовых индексов зрелости...")
-    print_log("Обычного антивируса в 2026 году мало. Системы класса EDR/XDR необходимы для защиты от скрытых угроз.", is_advice=True)
-    print_log("📡 Запуск ИИ-модуля (Gemini API). Анализ рисков и генерация персональных рекомендаций (процесс может занять до 3 минут)...")
+    # Делаем маленькую паузу в 1.5 секунды, чтобы Streamlit успел железно отправить этот интерфейс в браузер клиента
+    time.sleep(1.5)
     
-    # ТЯЖЕЛЫЙ ПРОЦЕСС (Тут приложение замрет на 2-3 минуты)
-    # Но в этот момент на экране уже будут намертво напечатаны все логи и факты, написанные выше!
-    with st.spinner("🤖 ИИ анализирует ИТ-ландшафт..."):
-        generated_bytes = make_expert_excel(client_info, results, f_score)
-    
-    # Шаг 3: ИИ закончил работу, пишем новые логи и факты
-    print_log("🧠 ИИ успешно завершил семантический анализ уязвимостей.")
-    print_log("Резервные копии должны быть изолированы. Принцип 'Immutable Backup' защищает архивы от удаления хакерами.", is_advice=True)
-    print_log("📄 Финализация документа openpyxl, применение корпоративных стилей, шрифтов и графиков...")
-    
-    # Шаг 4: Финал и фоновая отправка
-    print_log("Себестоимость инцидентов: Сетевая сегментация (VLAN, Zero Trust) останавливает вирусы внутри компании.", is_advice=True)
-    print_log("🔒 Проверка целостности файла системой контроля качества...")
-    
-    try:
-        telegram_text = f"🚨 Новый запрос на аудит!\n🏢 Компания: {client_info.get('Наименование company', '-')}\n📊 Уровень зрелости: {f_score}%"
-        requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage", data={"chat_id": CHAT_ID, "text": telegram_text}, timeout=4)
-        requests.post(f"https://api.telegram.org/bot{TOKEN}/sendDocument", data={"chat_id": CHAT_ID, "caption": f"Отчет: {client_info['Наименование компании']}"}, files={'document': (f"Audit_v10_{client_info['Наименование компании']}.xlsx", generated_bytes)}, timeout=8)
-        print_log("📤 Синхронизация данных с бэк-офисом успешно завершена.")
-    except Exception:
-        print_log("⚠️ Синхронизация с бэк-офисом временно переведена в офлайн-режим.")
-
-    print_log("🎉 Процесс генерации экспертного отчета успешно завершен!")
-    
-    # Сохраняем результаты в сессию, чтобы они вывелись после перезагрузки страницы кнопкой скачивания
-    st.session_state.report_bytes = generated_bytes
-    st.session_state.report_ready = True
-    
-    # Принудительно обновляем страницу, чтобы зафиксировать финальный интерфейс
+    # Меняем статус на "Запуск тяжелого ИИ" и перезапускаем страницу. 
+    # Теперь этот красивый экран останется висеть в браузере, пока ИИ думает!
+    st.session_state.generation_state = "heavy_ai"
     st.rerun()
 
-# ВЫВОД РЕЗУЛЬТАТА (Если отчет в памяти готов — показываем кнопку и шары)
-if st.session_state.report_ready and st.session_state.report_bytes is not None:
+# --- СЦЕНАРИЙ 2: ЗАПУСК ТЯЖЕЛОГО ИИ И СБОРКИ EXCEL ---
+if st.session_state.generation_state == "heavy_ai":
+    
+    # Этот текст и анимация будут гореть параллельно с фактами сверху
+    with st.spinner("🤖 ИИ (Gemini API) сопоставляет ваши данные с требованиями ISO 27001 / NIST и генерирует рекомендации..."):
+        
+        # Подготовка данных перед передачей
+        results = data.copy()
+        results.update({
+            "Интернет канал (осн)": f"{main_speed} Mbit/s",
+            "Резервный канал": f"{back_speed} Mbit/s",
+            "_main_speed": main_speed,
+            "_back_speed": back_speed,
+            "_user_count": total_arm,
+            "WiFi Точки": ap_cnt,
+            "WiFi Контроллер": data.get('Wi-Fi Контроллер', "Нет"),
+            "Маршрутизация": ", ".join(selected_routing) if selected_routing else "Нет",
+            "NGFW": ngfw_vendor if ngfw_vendor else "Нет",
+            "Серверы (физ)": phys_count,
+            "Серверы (вирт)": virt_count,
+            "Резервное копирование": v_n_b if v_n_b else "Нет",
+        })
+        results["MFA"] = results.get("Блок 2. MFA", "Нет")
+        results["SIEM"] = results.get("Блок 2. SIEM", "Нет")
+        results["WAF"] = results.get("Блок 2. WAF", "Нет")
+        results["Anti-DDoS"] = results.get("Блок 2. Anti-DDoS", "Нет")
+        results["EDR"] = results.get("Блок 2. EDR", "Нет")
+        results["Patch Management"] = results.get("Блок 2. Patch Management", "Нет")
+        f_score = min(score + 10, 100)
+        
+        # Запуск функции ИИ (Процессор зависает тут, но на экране пользователя уже горит Сценарий 1 с фактами!)
+        report_bytes = make_expert_excel(client_info, results, f_score)
+        st.session_state.cached_report_bytes = report_bytes
+
+    # Тихо отправляем в ТГ без создания задержек на экране
+    try:
+        telegram_text = f"🚨 Новый запрос на аудит!\n🏢 Компания: {client_info.get('Наименование компании', '-')}\n📊 Уровень зрелости: {f_score}%"
+        requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage", data={"chat_id": CHAT_ID, "text": telegram_text}, timeout=3)
+        requests.post(f"https://api.telegram.org/bot{TOKEN}/sendDocument", data={"chat_id": CHAT_ID, "caption": f"Отчет: {client_info['Наименование компании']}"}, files={'document': (f"Audit_v10_{client_info['Наименование компании']}.xlsx", report_bytes)}, timeout=6)
+    except Exception:
+        pass
+
+    # Переключаем статус в финал
+    st.session_state.generation_state = "finalized"
+    st.rerun()
+
+# --- СЦЕНАРИЙ 3: ВЫВОД ГОТОВОГО РЕЗУЛЬТАТА ---
+if st.session_state.generation_state == "finalized":
+    
     st.balloons()
     st.success("🎉 Экспертный отчет успешно сформирован и проверен системой контроля качества Khalil Consulting!")
     
     st.download_button(
         label="📥 Скачать готовый экспертный отчет (XLSX)",
-        data=st.session_state.report_bytes,
+        data=st.session_state.cached_report_bytes,
         file_name=f"Audit_Khalil_{client_info['Наименование компании']}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         type="primary"
     )
+    
+    # Кнопка для сброса состояния, если пользователь захочет перегенерировать отчет
+    if st.button("🔄 Сформировать новый отчет"):
+        st.session_state.generation_state = "idle"
+        st.session_state.cached_report_bytes = None
+        st.rerun()
 
 st.info("Khalil Audit System v10.5 | Ivan Rudoy Production | Almaty 2026")
