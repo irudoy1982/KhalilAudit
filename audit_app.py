@@ -1299,7 +1299,7 @@ if validation_errors:
 
 if st.button("📊 Сформировать экспертный отчет", disabled=len(validation_errors) > 0):
     
-    # Подготовка данных (быстрый этап)
+    # Сбор данных (быстрый этап)
     results = data.copy()
     results.update({
         "Интернет канал (осн)": f"{main_speed} Mbit/s",
@@ -1323,74 +1323,54 @@ if st.button("📊 Сформировать экспертный отчет", di
     results["Patch Management"] = results.get("Блок 2. Patch Management", "Нет")
     f_score = min(score + 10, 100)
 
-    # Список фактов, которые гарантированно будут видны
+    # Список фактов. Мы выберем один СЛУЧАЙНЫЙ, чтобы при каждой генерации он был новым
     security_advices = [
-        "🛡️ **Знаете ли вы?** Внедрение многофакторной аутентификации (MFA) блокирует до 99.9% автоматизированных атак на учетные записи.",
-        "🛡️ **Совет эксперта:** Обычного антивируса (EPP) в 2026 году уже недостаточно. Решения класса EDR/XDR необходимы для выявления скрытых угроз.",
-        "🛡️ **Архитектура:** Резервные копии должны быть изолированы. Принцип 'Immutable Backup' гарантирует, что злоумышленники не зашифруют архивы.",
-        "🛡️ **Безопасность сети:** Сетевая сегментация (VLAN, Zero Trust) — лучший способ остановить распространение вируса-вымогателя внутри компании.",
-        "🛡️ **Статистика:** Более 80% инцидентов кибербезопасности начинаются с человеческого фактора (фишинг). Регулярно обучайте команду кибергигиене."
+        "🛡️ **Полезный факт об ИБ:** Внедрение многофакторной аутентификации (MFA) блокирует до 99.9% автоматизированных атак на корпоративные учетные записи.",
+        "🛡️ **Совет эксперта:** Обычного антивируса (EPP) в 2026 году уже недостаточно. Решения класса EDR/XDR необходимы для своевременного выявления скрытых угроз.",
+        "🛡️ **Архитектурный подход:** Резервные копии должны быть изолированы от основной сети. Принцип 'Immutable Backup' гарантирует, что хакеры не смогут зашифровать ваши бэкапы.",
+        "🛡️ **Безопасность сети:** Сетевая сегментация (VLAN, концепция Zero Trust) — лучший способ остановить распространение вируса-вымогателя внутри периметра компании.",
+        "🛡️ **Статистика:** Более 80% успешных кибератак начинаются с человеческого фактора (фишинг). Регулярно проводите симуляции атак для обучения команды."
     ]
-
-    # Создаем стационарные зоны на экране, которые Streamlit не сможет проигнорировать
-    progress_container = st.empty()
-    advice_container = st.empty()
-    log_container = st.empty()
-
-    # --- СЦЕНАРИЙ 1: Сбор данных ---
-    progress_container.progress(10)
-    advice_container.info(security_advices[0])
-    log_container.markdown("⚙️ **Шаг 1/4:** Сбор и нормализация параметров ИТ-инфраструктуры...")
-    time.sleep(2.5)  # Задержка, чтобы пользователь успел прочитать первый факт
-
-    # --- СЦЕНАРИЙ 2: Подготовка к ИИ ---
-    progress_container.progress(30)
-    advice_container.info(security_advices[1])
-    log_container.markdown("🧠 **Шаг 2/4:** Передача профиля ландшафта в ИИ-модуль (Gemini API)... Анализ рисков.")
-    time.sleep(2.5)  # Задержка для фиксации второго факта на экране перед зависанием API
-
-    # --- ТЯЖЕЛЫЙ ЭТАП (Зависание процессора) ---
-    # Перед тем как уйти в долгий вызов ИИ, мы принудительно выводим на экран Третий Факт!
-    # Он останется висеть на экране все 2-3 минуты, пока ИИ думает. Пользователь будет его читать.
-    progress_container.progress(55)
-    advice_container.info(security_advices[2])
     
-    # Используем spinner, чтобы показать, что процесс идет под капотом
-    with st.spinner("🤖 ИИ сопоставляет данные с требованиями ISO 27001 / NIST и подбирает стек решений..."):
-        report_bytes = make_expert_excel(client_info, results, f_score)
+    import random
+    chosen_advice = random.choice(security_advices)
 
-    # --- СЦЕНАРИЙ 3: Выход из ИИ / Генерация Excel ---
-    # Как только ИИ ответил, интерфейс "оттаивает". Мы мгновенно меняем факт на Четвертый!
-    progress_container.progress(80)
-    advice_container.info(security_advices[3])
-    log_container.markdown("📄 **Шаг 3/4:** Финализация документа openpyxl, стилизация листов и применение шрифтов...")
-    time.sleep(3.0)  # Даем прочитать четвертый факт
+    # Создаем жесткие визуальные контейнеры
+    # ВАЖНО: Мы НЕ упаковываем их в time.sleep, а выводим СРАЗУ на экран
+    status_indicator = st.empty()
+    progress_indicator = st.empty()
+    advice_indicator = st.empty()
+    
+    # Отрисовываем интерфейс ДО запуска тяжелой функции
+    status_indicator.warning("🧠 **Шаг 1/2:** ИИ-эксперт (Gemini API) проводит семантический анализ рисков и подбирает решения...")
+    progress_indicator.progress(40)
+    advice_indicator.info(chosen_advice) # Тот самый факт, который теперь железно застынет на экране!
 
-    # --- СЦЕНАРИЙ 4: Финализация и разгрузка отправки ---
-    # Чтобы финал не висел серой полосой, мы переключаем интерфейс на Пятый Факт и меняем статус-текст
-    progress_container.progress(95)
-    advice_container.info(security_advices[4])
-    log_container.markdown("🔒 **Шаг 4/4:** Проверка контрольных сумм отчета и шифрование сессии...")
-    time.sleep(2.0)
+    # ЗАПУСК ТЯЖЕЛОГО ПРОЦЕССА (Зависание на 2-3 минуты происходит ЗДЕСЬ)
+    # Пользователь в этот момент видит: статус ИИ, полосу 40% и красивую плашку с фактом ИБ.
+    report_bytes = make_expert_excel(client_info, results, f_score)
 
-    # Тихая фоновая отправка в ТГ (теперь она не покажется долгой, так как текст выше обновился)
+    # Меняем статус на финализацию (происходит мгновенно после ответа ИИ)
+    status_indicator.info("📄 **Шаг 2/2:** Сборка финального Excel-отчета, применение корпоративных стилей и шрифтов...")
+    progress_indicator.progress(85)
+    
+    # Тихо и быстро отправляем данные в Telegram (в фоне)
     try:
         telegram_text = f"🚨 Новый запрос на аудит!\n🏢 Компания: {client_info.get('Наименование компании', '-')}\n📊 Уровень зрелости: {f_score}%"
-        requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage", data={"chat_id": CHAT_ID, "text": telegram_text})
-        requests.post(f"https://api.telegram.org/bot{TOKEN}/sendDocument", data={"chat_id": CHAT_ID, "caption": f"Отчет: {client_info['Наименование компании']}"}, files={'document': (f"Audit_v10_{client_info['Наименование компании']}.xlsx", report_bytes)})
+        requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage", data={"chat_id": CHAT_ID, "text": telegram_text}, timeout=5)
+        requests.post(f"https://api.telegram.org/bot{TOKEN}/sendDocument", data={"chat_id": CHAT_ID, "caption": f"Отчет: {client_info['Наименование компании']}"}, files={'document': (f"Audit_v10_{client_info['Наименование компании']}.xlsx", report_bytes)}, timeout=10)
     except Exception:
         pass
 
-    # Конец процесса
-    progress_container.progress(100)
-    time.sleep(0.5)
+    # Моментально закрываем прогресс-бар
+    progress_indicator.progress(100)
+    
+    # Очищаем экраны ожидания
+    status_indicator.empty()
+    progress_indicator.empty()
+    advice_indicator.empty()
 
-    # Полностью очищаем все элементы ожидания, чтобы освободить место под кнопку
-    progress_container.empty()
-    advice_container.empty()
-    log_container.empty()
-
-    # Вывод результата
+    # Рисуем финальный результат
     st.balloons()
     st.success("🎉 Экспертный отчет успешно сформирован и проверен системой контроля качества Khalil Consulting!")
     
