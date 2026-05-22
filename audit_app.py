@@ -1307,6 +1307,100 @@ if validation_errors:
 # Она активна только тогда, когда процесс еще не запущен
 if st.session_state.generation_state == "idle":
     if st.button("📊 Сформировать экспертный отчет", disabled=len(validation_errors) > 0):
+        alert_placeholder = st.empty()
+        console_placeholder = st.empty()
+        progress_bar = st.progress(0)
+
+        st.markdown("""
+        <style>
+
+        .cyber-alert-box {
+            background-color: #fff8e1;
+            border: 1px solid #ffcc80;
+            color: #ef6c00;
+            padding: 15px;
+            border-radius: 6px;
+            text-align: center;
+            font-size: 14px;
+            margin-bottom: 20px;
+            font-weight: bold;
+        }
+
+        .cyber-log-box {
+            background: #000;
+            color: #00ff00;
+            font-family: monospace;
+            padding: 15px;
+            border: 1px solid #333;
+            height: 110px;
+            overflow: hidden;
+            border-radius: 4px;
+            margin-bottom: 20px;
+            font-size: 13px;
+        }
+
+        </style>
+        """, unsafe_allow_html=True)
+
+        alert_placeholder.markdown("""
+
+        <div class="cyber-alert-box">
+
+            ⏳ Выполняется глубокий анализ инфраструктуры.<br>
+            Формирование отчета может занять до 3 минут.<br><br>
+
+            <span style="color:red;">
+            НЕ ЗАКРЫВАЙТЕ И НЕ ОБНОВЛЯЙТЕ СТРАНИЦУ
+            </span>
+
+        </div>
+
+        """, unsafe_allow_html=True)
+
+        steps = [
+
+            "Инициализация audit engine...",
+            "Проверка обязательных полей...",
+            "Нормализация инфраструктурных данных...",
+            "Анализ perimeter security...",
+            "Анализ endpoint security posture...",
+            "Проверка backup resilience...",
+            "Расчет cybersecurity maturity...",
+            "Построение security domains...",
+            "AI анализ рисков...",
+            "Формирование executive summary...",
+            "Генерация XLSX отчета...",
+            "Финализация артефактов..."
+        ]
+
+        active_logs = []
+
+        progress = 0
+
+        for step in steps:
+
+            active_logs.append(
+                f"[{time.strftime('%H:%M:%S')}] {step}"
+            )
+
+            if len(active_logs) > 4:
+                active_logs.pop(0)
+
+            console_placeholder.markdown(
+                '<div class="cyber-log-box">' +
+                "".join([f'<div>▶ {line}</div>' for line in active_logs]) +
+                '</div>',
+                unsafe_allow_html=True
+            )
+
+            progress += random.randint(5, 9)
+
+            progress_bar.progress(min(progress, 88))
+
+            time.sleep(random.uniform(0.7, 1.4))
+
+
+        
         # При клике мы просто меняем статус в памяти на "подготовка" и мгновенно перезапускаем страницу
         st.session_state.generation_state = "preparing"
         st.rerun()
