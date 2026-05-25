@@ -1347,7 +1347,7 @@ if st.session_state.generation_state == "idle":
         <div class="cyber-alert-box">
 
             ⏳ Выполняется глубокий анализ инфраструктуры.<br>
-            Формирование отчета может занять до 3 минут.<br><br>
+            Формирование отчета может занять до 3 минут.<br>
 
             <span style="color:red;">
             НЕ ЗАКРЫВАЙТЕ И НЕ ОБНОВЛЯЙТЕ СТРАНИЦУ
@@ -1443,7 +1443,7 @@ if st.session_state.generation_state == "preparing":
 if st.session_state.generation_state == "heavy_ai":
     
     # Этот текст и анимация будут гореть параллельно с фактами сверху
-    with st.spinner("🤖 ИИ (Gemini API) сопоставляет ваши данные с требованиями ISO 27001 / NIST и генерирует рекомендации..."):
+    with st.spinner("Производится глубокий анализ рисков..."):
         
         # Подготовка данных перед передачей
         results = data.copy()
