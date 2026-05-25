@@ -1350,8 +1350,7 @@ if st.session_state.generation_state == "idle":
             Формирование отчета может занять до 3 минут.
 
             НЕ ЗАКРЫВАЙТЕ И НЕ ОБНОВЛЯЙТЕ СТРАНИЦУ
-            </span>
-
+            
         </div>
 
         """, unsafe_allow_html=True)
@@ -1366,7 +1365,7 @@ if st.session_state.generation_state == "idle":
             "Проверка backup resilience...",
             "Расчет cybersecurity maturity...",
             "Построение security domains...",
-            "AI анализ рисков...",
+            "Глубокий анализ рисков...",
             "Формирование executive summary...",
             "Генерация XLSX отчета...",
             "Финализация артефактов..."
