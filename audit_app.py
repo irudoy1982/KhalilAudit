@@ -1473,7 +1473,18 @@ if st.session_state.generation_state == "heavy_ai":
 
     # Тихо отправляем в ТГ без создания задержек на экране
     try:
-        telegram_text = f"🚨 Новый запрос на аудит!\n🏢 Компания: {client_info.get('Наименование компании', '-')}\n📊 Уровень зрелости: {f_score}%"
+        telegram_text = (
+    "🚨 Новый запрос на аудит!\n"
+    f"🏢 Компания: {client_info.get('Наименование компании', '-')}\n"
+    f"📍 Город: {client_info.get('Город', '-')}\n"
+    f"📊 Сфера: {client_info.get('Сфера деятельности', '-')}\n"
+    f"🌐 Сайт: {client_info.get('Сайт компании', '-')}\n"
+    f"📧 Email: {client_info.get('Email', '-')}\n"
+    f"📞 Телефон: {client_info.get('Контактный телефон', '-')}\n"
+    f"👤 Контакт: {client_info.get('ФИО контактного лица', '-')}\n"
+    f"💼 Должность: {client_info.get('Должность', '-')}\n"
+    f"📊 Уровень зрелости: {f_score}%"
+)
         requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage", data={"chat_id": CHAT_ID, "text": telegram_text}, timeout=3)
         requests.post(f"https://api.telegram.org/bot{TOKEN}/sendDocument", data={"chat_id": CHAT_ID, "caption": f"Отчет: {client_info['Наименование компании']}"}, files={'document': (f"Audit_v10_{client_info['Наименование компании']}.xlsx", report_bytes)}, timeout=6)
     except Exception:
