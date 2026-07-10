@@ -290,6 +290,54 @@ def build_telegram_ai_failure_text(client_info, final_score, ai_error):
     )
 
 
+def build_telegram_generation_started_text(client_info, final_score):
+    return (
+        "🟢 Начато формирование аудита Khalil Audit\n"
+        f"🏢 Компания: {client_info.get('Наименование компании', '-')}\n"
+        f"📍 Город: {client_info.get('Город', '-')}\n"
+        f"📊 Сфера: {client_info.get('Сфера деятельности', '-')}\n"
+        f"🌐 Сайт: {client_info.get('Сайт компании', '-')}\n"
+        f"📧 Email: {client_info.get('Email', '-')}\n"
+        f"📞 Телефон: {client_info.get('Контактный телефон', '-')}\n"
+        f"👤 Контакт: {client_info.get('ФИО контактного лица', '-')}\n"
+        f"💼 Должность: {client_info.get('Должность', '-')}\n"
+        f"📊 Предварительная зрелость: {final_score}%"
+    )
+
+
+def build_telegram_generation_error_text(client_info, final_score, error):
+    safe_error = str(error or "Неизвестная ошибка").strip()
+    if len(safe_error) > 1800:
+        safe_error = safe_error[:1800] + "..."
+
+    return (
+        "🔴 Ошибка формирования аудита Khalil Audit\n"
+        f"🏢 Компания: {client_info.get('Наименование компании', '-')}\n"
+        f"📍 Город: {client_info.get('Город', '-')}\n"
+        f"📧 Email: {client_info.get('Email', '-')}\n"
+        f"📞 Телефон: {client_info.get('Контактный телефон', '-')}\n"
+        f"👤 Контакт: {client_info.get('ФИО контактного лица', '-')}\n"
+        f"📊 Предварительная зрелость: {final_score}%\n\n"
+        f"Диагностика: {safe_error}"
+    )
+
+
+def send_internal_telegram_message(text, timeout_seconds=8):
+    if not TOKEN or not CHAT_ID:
+        return "Telegram не отправлен: не найдены TELEGRAM_TOKEN или TELEGRAM_CHAT_ID."
+
+    try:
+        telegram_send_node(
+            TOKEN,
+            "sendMessage",
+            {"chat_id": CHAT_ID, "text": text},
+            timeout_seconds=timeout_seconds
+        )
+        return "ok"
+    except Exception as exc:
+        return f"Telegram не отправлен: {redact_secret(exc, TOKEN)}"
+
+
 def normalize_ai_risks_payload(payload):
     def repair_mojibake(value):
         text = str(value)
@@ -6145,6 +6193,8 @@ if "report_shortened_last" not in st.session_state:
     st.session_state.report_shortened_last = False
 if "last_report_risk_sources" not in st.session_state:
     st.session_state.last_report_risk_sources = []
+if "telegram_generation_started_sent" not in st.session_state:
+    st.session_state.telegram_generation_started_sent = False
 
 render_generation_guard(
     st.session_state.generation_state in {"preparing", "heavy_ai"}
@@ -6311,6 +6361,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 if st.session_state.generation_state == "idle":
     if st.button("Сформировать экспертный отчет", disabled=len(validation_errors) > 0, type="primary"):
+        st.session_state.telegram_generation_started_sent = False
         render_generation_guard(True)
         alert_placeholder = st.empty()
         console_placeholder = st.empty()
@@ -6420,65 +6471,71 @@ if st.session_state.generation_state == "heavy_ai":
 
     render_generation_live_panel("Идет глубокий анализ и сборка отчета", active_step=4)
 
+    if not st.session_state.telegram_generation_started_sent:
+        st.session_state.telegram_status = send_internal_telegram_message(
+            build_telegram_generation_started_text(client_info, preview_score)
+        )
+        if st.session_state.telegram_status == "ok":
+            st.session_state.telegram_generation_started_sent = True
+
     # Этот текст и анимация будут гореть параллельно с фактами сверху
     with st.spinner("Производится глубокий анализ рисков..."):
-        
-        # Подготовка данных перед передачей
-        results = build_report_results(
-            data,
-            main_speed,
-            back_speed,
-            total_arm,
-            ap_cnt,
-            selected_routing,
-            ngfw_vendor,
-            phys_count,
-            virt_count,
-            v_n_b
-        )
-        f_score = preview_score
-        
-        st.session_state.ai_last_error = ""
-        st.session_state.ai_model_used = ""
-        st.session_state.ai_used_in_last_report = False
+        try:
+            # Подготовка данных перед передачей
+            results = build_report_results(
+                data,
+                main_speed,
+                back_speed,
+                total_arm,
+                ap_cnt,
+                selected_routing,
+                ngfw_vendor,
+                phys_count,
+                virt_count,
+                v_n_b
+            )
+            f_score = preview_score
 
-        # Запуск экспертного анализа и сборки клиентского XLSX.
-        report_bytes = make_expert_excel(client_info, results, f_score)
-        ai_report_ready = (
-            bool(st.session_state.get("ai_used_in_last_report"))
-            and not st.session_state.get("ai_last_error")
-        )
-        st.session_state.report_shortened_last = False
-        if not ai_report_ready:
-            if TOKEN and CHAT_ID:
-                try:
-                    telegram_send_node(
-                        TOKEN,
-                        "sendMessage",
-                        {
-                            "chat_id": CHAT_ID,
-                            "text": build_telegram_ai_failure_text(
-                                client_info,
-                                f_score,
-                                st.session_state.get("ai_last_error", "AI analysis did not return recommendations")
-                            )
-                        },
-                        timeout_seconds=8
+            st.session_state.ai_last_error = ""
+            st.session_state.ai_model_used = ""
+            st.session_state.ai_used_in_last_report = False
+
+            # Запуск экспертного анализа и сборки клиентского XLSX.
+            report_bytes = make_expert_excel(client_info, results, f_score)
+            ai_report_ready = (
+                bool(st.session_state.get("ai_used_in_last_report"))
+                and not st.session_state.get("ai_last_error")
+            )
+            st.session_state.report_shortened_last = False
+            if not ai_report_ready:
+                st.session_state.telegram_status = send_internal_telegram_message(
+                    build_telegram_ai_failure_text(
+                        client_info,
+                        f_score,
+                        st.session_state.get("ai_last_error", "AI analysis did not return recommendations")
                     )
-                    st.session_state.telegram_status = "ai_failure_sent"
-                except Exception as exc:
-                    st.session_state.telegram_status = f"Telegram failure alert was not sent: {redact_secret(exc, TOKEN)}"
-            else:
-                st.session_state.telegram_status = "Telegram failure alert skipped: missing TELEGRAM_TOKEN or TELEGRAM_CHAT_ID."
+                )
 
-        sales_report_bytes, telegram_sales = make_internal_sales_excel(
-            client_info,
-            results,
-            f_score,
-            report_bytes
-        )
-        st.session_state.cached_report_bytes = report_bytes
-        st.session_state.cached_sales_report_bytes = sales_report_bytes
+            sales_report_bytes, telegram_sales = make_internal_sales_excel(
+                client_info,
+                results,
+                f_score,
+                report_bytes
+            )
+            st.session_state.cached_report_bytes = report_bytes
+            st.session_state.cached_sales_report_bytes = sales_report_bytes
+        except Exception as exc:
+            st.session_state.telegram_status = send_internal_telegram_message(
+                build_telegram_generation_error_text(
+                    client_info,
+                    preview_score,
+                    redact_secret(exc, TOKEN)
+                )
+            )
+            st.session_state.generation_state = "idle"
+            st.session_state.generation_attempt_started_at = None
+            st.error("Не удалось сформировать отчет. Мы уже получили техническую диагностику, попробуйте повторить позже.")
+            st.stop()
 
     # Тихо отправляем в ТГ без создания задержек на экране
     st.session_state.telegram_status = ""
@@ -6557,6 +6614,7 @@ if st.session_state.generation_state == "finalized":
         st.session_state.ai_last_error = ""
         st.session_state.report_shortened_last = False
         st.session_state.generation_attempt_started_at = None
+        st.session_state.telegram_generation_started_sent = False
         st.rerun()
 
 st.info("Khalil Audit System v11.01 | by Ivan Rudoy | Алматы 2026")
