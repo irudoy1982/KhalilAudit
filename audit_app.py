@@ -1305,30 +1305,37 @@ LEVEL только CRITICAL, HIGH, MEDIUM или LOW.
             ),
         )
 
+        def extract_gemini_error(response):
+            try:
+                payload = response.json()
+                message = payload.get("error", {}).get("message", response.text)
+                status = payload.get("error", {}).get("status", "")
+                return f"HTTP {response.status_code} {status}: {message}"
+            except Exception:
+                return f"HTTP {response.status_code}: {response.text[:1200]}"
+
         def call_gemini(request_payload, active_model):
             active_url = gemini_url(active_model)
             response_payload = None
-            try:
-                if os.name != "nt":
-                    import requests
+            if os.name != "nt":
+                import requests
 
-                    def gemini_post(verify):
-                        return requests.post(
-                            active_url,
-                            params={"key": api_key},
-                            json=request_payload,
-                            timeout=ai_timeout,
-                            verify=verify,
-                        )
+                def gemini_post(verify):
+                    return requests.post(
+                        active_url,
+                        params={"key": api_key},
+                        json=request_payload,
+                        timeout=ai_timeout,
+                        verify=verify,
+                    )
 
-                    try:
-                        response = gemini_post(REQUEST_VERIFY)
-                    except requests.exceptions.SSLError:
-                        response = gemini_post(False)
-                    response.raise_for_status()
-                    response_payload = response.json()
-            except Exception:
-                response_payload = None
+                try:
+                    response = gemini_post(REQUEST_VERIFY)
+                except requests.exceptions.SSLError:
+                    response = gemini_post(False)
+                if not response.ok:
+                    raise RuntimeError(extract_gemini_error(response))
+                return response.json()
 
             if response_payload is None:
                 response_payload = node_fetch_json(
@@ -1375,8 +1382,6 @@ LEVEL только CRITICAL, HIGH, MEDIUM или LOW.
                     "high demand",
                     "пустой ответ gemini",
                     "finishreason=unknown",
-                    "resource_exhausted",
-                    "429",
                 )
             )
 
