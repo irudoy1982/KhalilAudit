@@ -1,4 +1,4 @@
-﻿import streamlit as st
+import streamlit as st
 import streamlit.components.v1 as components
 import pandas as pd
 import os
@@ -104,6 +104,7 @@ def get_app_secret(name, default=None):
 
 
 APP_INSTANCE_DEFAULT = "Khalil"
+APP_VERSION = "12.0.0"
 
 
 def get_app_instance_label():
@@ -921,13 +922,13 @@ def generate_rule_based_risks(results, context):
     if users > 100 and results.get("Сегментация сети") == "Нет":
 
         risks.append({
-            "level": "HIGH",
-            "risk": "Отсутствует сегментация сети",
-            "description": "Крупная инфраструктура эксплуатируется без сетевой сегментации.",
-            "impact": "Высокий риск lateral movement и распространения malware между сегментами.",
-            "recommendation": "Реализовать VLAN/ACL/Zero Trust сегментацию.",
+            "level": "MEDIUM",
+            "risk": "Требуется уточнить архитектуру сегментации сети",
+            "description": "В анкете не описаны VLAN, ACL, политики FortiGate/NGFW и правила доступа между пользовательскими, серверными и гостевыми сегментами.",
+            "impact": "Без подтвержденной схемы сегментации невозможно корректно оценить риск lateral movement; отсутствие NAC само по себе не доказывает отсутствие сегментации.",
+            "recommendation": "Проверить текущие VLAN/ACL, политики NGFW, guest Wi-Fi и доступ к серверным сегментам; по результатам подготовить точечные меры усиления.",
             "regulators": ["ISO 27001", "NIST"],
-            "vendors": ["Cisco", "Aruba", "Fortinet"]
+            "vendors": ["Fortinet", "Cisco", "Huawei"]
         })
 
     # =========================
@@ -992,13 +993,13 @@ def generate_rule_based_risks(results, context):
 
     if results.get("СХД") != "Нет" and results.get("Мониторинг СХД") == "Нет":
         risks.append({
-            "level": "MEDIUM",
-            "risk": "Не описан контроль емкости и производительности СХД",
-            "description": "В анкете указана СХД, но не указаны процессы контроля емкости, производительности, snapshot-политик и предупреждения деградации.",
-            "impact": "Рост данных, деградация RAID-групп или нехватка производительности могут привести к снижению доступности ERP, CRM и файловых сервисов.",
-            "recommendation": "Ввести регулярный capacity management для СХД: пороги заполнения, контроль latency/IOPS, проверку snapshot-политик и план расширения емкости.",
+            "level": "LOW",
+            "risk": "СХД: требуется проверить capacity/performance, без признаков аварийного риска",
+            "description": "В анкете указаны RAID, диски, backup/snapshot-практики, но не раскрыты метрики утилизации, latency/IOPS и правила контроля емкости.",
+            "impact": "Без метрик нельзя утверждать о проблемах надежности или производительности; корректнее провести health-check и подтвердить запас емкости.",
+            "recommendation": "Проверить утилизацию, latency/IOPS, состояние RAID, snapshot-политики и связку с backup; по результатам дать рекомендации по capacity management.",
             "regulators": ["ITIL", "ISO 20000"],
-            "vendors": ["Zabbix", "PRTG", "ManageEngine"]
+            "vendors": ["Veeam"]
         })
 
     if has_public_web and results.get("WAF") == "Нет":
@@ -1338,10 +1339,9 @@ LOW
 18. Цель отчета - экспертная диагностика для клиента. Формулировки должны звучать как
 профессиональное аудиторское заключение, а не как коммерческое предложение.
 
-19. Рекомендации должны учитывать масштаб инфраструктуры:
-- для малой инфраструктуры не предлагай тяжелый SIEM/SOAR как первоочередной проект;
-- для средней инфраструктуры допускай MSSP/SOC, управляемые сервисы и поэтапные внедрения;
-- для крупной инфраструктуры допускай полноценные платформенные проекты.
+19. Рекомендации должны учитывать фактический масштаб инфраструктуры без ярлыков
+"малая", "средняя" или "крупная" компания. Опирайся на число АРМ, серверов,
+площадок, критичных сервисов, публичных приложений и доступные ресурсы эксплуатации.
 
 20. Не перечисляй все отсутствующие технологии как риски. Выбирай только то, что логично
 для размера, серверов, публичных сервисов, бизнес-систем, разработки и текущих средств защиты.
@@ -1467,14 +1467,18 @@ JSON должен быть валидным: все строковые знач�
 - избегай примитивных фраз уровня "внедрить продукт"; сначала опиши управленческую/техническую меру, затем только категорию решения;
 - не повторяй один и тот же домен разными словами: MFA, удаленный доступ и учетные записи объединяй в один сильный риск, если нет отдельного факта;
 - не повторяй EDR/XDR/MDR несколькими пунктами; объединяй в один риск по endpoint detection/response;
-- для малого масштаба не предлагай тяжелый SIEM/SOAR как первоочередной проект;
-- если инфраструктура малая, сначала предлагай базовые процессы, MFA, backup, patch management, EPP/EDR по необходимости и сегментацию;
-- если инфраструктура средняя или крупная, оцени связки: учетные записи, сеть, серверы, резервное копирование, почта, уязвимости, мониторинг и реагирование;
+- не называй организацию или инфраструктуру малой, средней или крупной; используй только объективные показатели анкеты;
+- не предлагай тяжелый SIEM/SOAR как первоочередной проект без достаточного числа источников событий, владельца процесса и ресурса на эксплуатацию;
+- оценивай связки: учетные записи, сеть, серверы, резервное копирование, почта, уязвимости, мониторинг и реагирование;
 - делай рекомендации экспертными: что сделать, зачем, какой ожидаемый эффект;
 - для каждой рекомендации дай порядок внедрения: быстрый шаг, проектный шаг, контроль результата;
 - legacy OS закрывай миграцией, изоляцией, сегментацией, обновлением, а не EDR/DLP;
 - не перечисляй все отсутствующие продукты как риски;
 - не путай категории: MFA не закрывается PAM, уязвимости не закрываются SIEM, устаревшие ОС не закрываются EDR.
+- OSPF, BGP и статическая маршрутизация описывают маршрутизацию и не доказывают наличие или отсутствие сетевой сегментации;
+- отсутствие NAC или ZTNA не доказывает отсутствие VLAN, ACL, VRF, зон NGFW и межсегментных политик;
+- если сегментация прямо не описана, формулируй "архитектура сегментации требует подтверждения", а не "сегментация отсутствует";
+- DLP защищает данные от утечек и никогда не является решением для сетевой сегментации;
 - не используй Microsoft как ИБ-вендора; Microsoft допустим только для ОС/миграции Windows/Windows Server.
 - строго не пиши "отсутствует", "не внедрено" или "не указано" про контроль из списка "Уже внедрено";
 - если MFA есть в списке "Уже внедрено", не создавай риск по отсутствию MFA.
@@ -2573,7 +2577,7 @@ def render_app_header():
         </div>
         <div class="audit-logo-lockup">
             {logo_html}
-            <div class="brand-name">Khalil Audit System v11.01</div>
+            <div class="brand-name">Khalil Audit System {APP_VERSION}</div>
             <div class="brand-signature">by Ivan Rudoy</div>
         </div>
     </div>
@@ -4465,32 +4469,83 @@ def build_context(results, client_info):
     return context
 
 
+def russian_count(value, one, few, many):
+    number = int(value or 0)
+    last_two = number % 100
+    last = number % 10
+    if 11 <= last_two <= 14:
+        word = many
+    elif last == 1:
+        word = one
+    elif 2 <= last <= 4:
+        word = few
+    else:
+        word = many
+    return f"{number} {word}"
+
+
 def infrastructure_profile(context):
     users = context.get("users", 0)
     servers = context.get("servers", 0)
+    users_text = russian_count(users, "АРМ", "АРМ", "АРМ")
+    servers_text = russian_count(servers, "сервер", "сервера", "серверов")
 
     if context.get("enterprise_company"):
-        return "Крупная распределенная инфраструктура", (
-            f"{users} АРМ, {servers} серверов. Требуется формальная модель "
+        return "Распределенный ИТ-контур", (
+            f"{users_text}, {servers_text}. Требуется формальная модель "
             "управления ИБ, мониторинга, резервирования и регулярной отчетности."
         )
 
     if context.get("large_company"):
-        return "Крупная инфраструктура", (
-            f"{users} АРМ, {servers} серверов. Важно стандартизировать процессы, "
+        return "Многоуровневый ИТ-контур", (
+            f"{users_text}, {servers_text}. Важно стандартизировать процессы, "
             "сегментацию, управление доступом и контроль обновлений."
         )
 
     if context.get("medium_company"):
-        return "Средняя инфраструктура", (
-            f"{users} АРМ, {servers} серверов. Приоритет - базовая управляемость, "
-            "защита рабочих мест, резервное копирование и контроль доступа."
+        return "ИТ-контур с серверной инфраструктурой", (
+            f"{users_text}, {servers_text}. Приоритеты определяются по критичности сервисов, "
+            "управляемости рабочих мест, восстановлению и контролю доступа."
         )
 
-    return "Малая инфраструктура", (
-        f"{users} АРМ, {servers} серверов. Рекомендации должны быть практичными: "
-        "минимум сложных платформ, максимум быстрых мер с понятной поддержкой."
+    return "ИТ-контур", (
+        f"{users_text}, {servers_text}. Приоритеты определяются по критичности сервисов, "
+        "операционным ограничениям и измеримому эффекту мер."
     )
+
+
+def it_context_summary(results, context):
+    assets = []
+    if context.get("users", 0):
+        assets.append(f"{context.get('users', 0)} АРМ")
+    if context.get("servers", 0):
+        assets.append(russian_count(context.get("servers", 0), "сервер", "сервера", "серверов"))
+    if is_enabled(results.get("Виртуализация")):
+        assets.append("виртуализация")
+    if is_enabled(results.get("СХД")):
+        assets.append("СХД")
+    if context.get("has_public_web"):
+        assets.append("публичные web-сервисы")
+    if context.get("has_critical_systems"):
+        assets.append("критичные бизнес-системы")
+    if context.get("has_development"):
+        assets.append("разработка")
+
+    process_focus = []
+    if not is_enabled(results.get("Мониторинг")):
+        process_focus.append("эксплуатационный мониторинг")
+    if not is_enabled(results.get("Patch Management")):
+        process_focus.append("управление обновлениями")
+    if context.get("servers", 0) and not is_enabled(results.get("DR")):
+        process_focus.append("DR/RTO/RPO")
+    if is_enabled(results.get("Резервное копирование")):
+        process_focus.append("проверка восстановления")
+    elif context.get("servers", 0):
+        process_focus.append("резервное копирование")
+
+    assets_text = ", ".join(assets) if assets else "масштаб ИТ не раскрыт"
+    focus_text = ", ".join(dict.fromkeys(process_focus)) if process_focus else "поддержание текущей модели эксплуатации"
+    return assets_text, focus_text
 
 
 def build_contextual_roadmap(results, context, domain_scores, risks):
@@ -4828,14 +4883,169 @@ def verified_distributors_for_vendors(vendors_text):
     distributor_map = load_verified_distributor_map()
     if not distributor_map:
         return "-"
+
+    def collect_distributors(vendor_values):
+        values = []
+        for vendor in vendor_values:
+            normalized_vendor = normalize_vendor_key(vendor)
+            for known_vendor, distributors in distributor_map.items():
+                if normalize_vendor_key(known_vendor) == normalized_vendor:
+                    values.append(f"{known_vendor}: {', '.join(distributors)}")
+        return values
+
     vendors = split_portfolio_list(vendors_text)
-    values = []
-    for vendor in vendors:
-        normalized_vendor = normalize_vendor_key(vendor)
-        for known_vendor, distributors in distributor_map.items():
-            if normalize_vendor_key(known_vendor) == normalized_vendor:
-                values.append(f"{known_vendor}: {', '.join(distributors)}")
+    values = collect_distributors(vendors)
+    if not values and vendors:
+        inferred_vendors = manufacturers_for_report_item({
+            "vendors": vendors,
+            "risk": str(vendors_text),
+            "description": str(vendors_text),
+        })
+        values = collect_distributors(split_portfolio_list(inferred_vendors))
+
     return "\n".join(list(dict.fromkeys(values))) or "-"
+
+
+def portfolio_vendors_for_report_item(item):
+    inferred = manufacturers_for_report_item(item)
+    if inferred and inferred != "-":
+        return inferred
+
+    existing_values = item.get("vendors", [])
+    if not isinstance(existing_values, list):
+        existing_values = [existing_values] if existing_values else []
+
+    distributor_map = load_verified_distributor_map()
+    direct_matches = []
+    for value in existing_values:
+        normalized_value = normalize_vendor_key(value)
+        for known_vendor, distributors in distributor_map.items():
+            if normalize_vendor_key(known_vendor) == normalized_value:
+                direct_matches.append(known_vendor)
+
+    if direct_matches:
+        return ", ".join(list(dict.fromkeys(direct_matches))[:8])
+
+    return ", ".join(str(value).strip() for value in existing_values if str(value).strip()) or "-"
+
+
+def portfolio_vendors_by_categories(categories, preferred=None, exclude=None, gap_text=None, limit=6):
+    detailed_matrix = load_detailed_solution_vendor_map()
+    preferred = preferred or []
+    exclude_keys = {
+        normalize_vendor_key(value)
+        for value in (exclude or [])
+    }
+    values = []
+    for category in categories:
+        values.extend(detailed_matrix.get(category, []))
+
+    filtered = []
+    for vendor in values:
+        if normalize_vendor_key(vendor) in exclude_keys:
+            continue
+        filtered.append(vendor)
+
+    preferred_keys = [normalize_vendor_key(value) for value in preferred]
+
+    def sort_key(vendor):
+        key = normalize_vendor_key(vendor)
+        return preferred_keys.index(key) if key in preferred_keys else len(preferred_keys)
+
+    filtered = sorted(list(dict.fromkeys(filtered)), key=sort_key)
+    if filtered:
+        return ", ".join(filtered[:limit])
+
+    return gap_text or "Нет подходящего производителя в матрице"
+
+
+def normalize_report_vendor_values(item):
+    values = item.get("vendors", [])
+    if not isinstance(values, list):
+        values = [values] if values else []
+    return [str(value).strip() for value in values if str(value).strip()]
+
+
+def solution_categories_for_report_item(item):
+    key = risk_semantic_key(item)
+    text = normalize_vendor_key(" ".join([
+        str(item.get("risk", "")),
+        str(item.get("description", "")),
+        str(item.get("recommendation", "")),
+        " ".join(normalize_report_vendor_values(item)),
+    ]))
+
+    if "ids" in text or "ips" in text or "intrusion" in text:
+        return "IDS/IPS; NGFW IPS-профили; мониторинг сетевых атак"
+
+    categories_by_key = {
+        "mfa": "MFA / Conditional Access",
+        "legacy_os": "Миграция ОС; изоляция legacy-сегмента; vulnerability assessment",
+        "siem_soc": "SOC / MSSP; SIEM; централизованный сбор логов",
+        "patch": "Vulnerability Management; Patch Management",
+        "endpoint_detection": "EDR / XDR / MDR",
+        "backup": "Backup; immutable-копии; восстановление после ransomware",
+        "web_waf": "WAF / CDN / Web Application Security",
+        "pam": "PAM; vault; контроль привилегированных сессий",
+        "dlp": "DLP / Data Security",
+        "mail": "Mail Security / Anti-Phishing",
+        "segmentation": "Сегментация сети; VLAN / ACL; NGFW policies",
+        "it_monitoring": "IT-мониторинг; capacity management",
+        "virtualization": "Виртуализация; lifecycle management",
+        "storage": "СХД health-check; capacity management",
+        "dr": "Disaster Recovery; RTO/RPO-планирование",
+        "appsec": "SAST / DAST / SCA",
+        "business_systems": "Обследование бизнес-систем; интеграционный аудит",
+    }
+    return categories_by_key.get(key, "Уточнить класс решения по результатам пресейла")
+
+
+def portfolio_manufacturers_for_report_item(item):
+    key = risk_semantic_key(item)
+    text = normalize_vendor_key(" ".join([
+        str(item.get("risk", "")),
+        str(item.get("description", "")),
+        str(item.get("recommendation", "")),
+        " ".join(normalize_report_vendor_values(item)),
+    ]))
+
+    if "ids" in text or "ips" in text or "intrusion" in text:
+        return portfolio_vendors_by_categories(
+            ["IDS/IPS", "NGFW"],
+            preferred=["Fortinet", "Check Point", "Palo Alto", "Forcepoint"],
+            gap_text="Нет отдельной категории IDS/IPS в матрице; проверить NGFW-портфель",
+        )
+
+    category_map = {
+        "mfa": (["MFA", "IAM"], [], ["ManageEngine"]),
+        "legacy_os": (["Operating Systems", "VM"], ["Microsoft", "Qualys", "Tenable", "Rapid7"], []),
+        "siem_soc": (["SOC", "SIEM"], ["Splunk", "IBM", "Rapid7", "Palo Alto", "Fortinet"], []),
+        "patch": (["VM", "Patch Management"], ["Qualys", "Tenable", "Rapid7", "Ivanti"], []),
+        "endpoint_detection": (["EDR", "XDR"], ["Fortinet", "Check Point", "CrowdStrike", "Trend Micro"], []),
+        "backup": (["Backup"], [], []),
+        "web_waf": (["WAF"], ["Check Point", "Fortinet", "F5", "Imperva", "Cloudflare"], []),
+        "pam": (["PAM"], ["Wallix", "CyberArk", "BeyondTrust"], ["ManageEngine"]),
+        "dlp": (["DLP"], [], []),
+        "mail": (["Email", "Mail Security"], ["Check Point", "Fortinet", "Trend Micro", "Forcepoint"], []),
+        "segmentation": (["NAC", "NGFW", "Network Equipment"], ["Fortinet", "Cisco", "Huawei", "Check Point"], []),
+        "it_monitoring": (["ITSM", "Monitoring", "NMS"], [], []),
+        "virtualization": (["Virtualization"], [], []),
+        "storage": (["Storage", "Backup"], [], []),
+        "dr": (["Backup", "DR"], [], []),
+        "appsec": (["SAST", "DAST", "SCA", "VM"], ["Qualys", "Checkmarx", "HCL AppScan"], []),
+    }
+
+    if key in category_map:
+        categories, preferred, exclude = category_map[key]
+        return portfolio_vendors_by_categories(
+            categories,
+            preferred=preferred,
+            exclude=exclude,
+            gap_text="Нет подходящего производителя в матрице",
+            limit=4 if key == "segmentation" else 6,
+        )
+
+    return manufacturers_for_report_item(item)
 
 
 def load_solution_vendor_map():
@@ -4864,8 +5074,15 @@ def load_solution_vendor_map():
         "MDM": ("mdm",),
         "Antiransomeware/EDR": ("edr", "xdr", "mdr", "epp", "endpoint", "конечн"),
         "Мультифаторная аутификация": ("mfa", "2fa", "многофактор"),
-        "ITSM/CMDB": ("itsm", "cmdb", "change management", "configuration management", "управление изменениями", "управление конфигурациями"),
-        "Миграция и виртуализация": ("миграция ос", "виртуализация", "virtualization", "migration project"),
+        "ITSM/CMDB": (
+            "itsm", "cmdb", "change management", "configuration management",
+            "управление изменениями", "управление конфигурациями",
+            "учет конфигураций", "учета конфигураций", "система учета конфигураций"
+        ),
+        "Миграция и виртуализация": (
+            "миграция ос", "миграция", "замена оборудования",
+            "виртуализация", "virtualization", "migration project"
+        ),
     }
     detailed_matrix = load_detailed_solution_vendor_map()
     if detailed_matrix:
@@ -4889,7 +5106,7 @@ def load_solution_vendor_map():
             solutions[15]: ("MDM", "MDM/UEM"),
             solutions[16]: ("EDR", "XDR", "AV"),
             solutions[17]: ("MFA",),
-            solutions[18]: (),
+            solutions[18]: ("ITSM", "ITAM"),
             solutions[19]: ("Servers", "Storage", "Operating Systems", "Virtualization"),
         }
         vendor_map = {}
@@ -5140,11 +5357,473 @@ def build_sales_opportunities(results, context, roadmap_items):
     return sorted(opportunities, key=lambda item: priority_order.get(item["priority"], 99))[:10]
 
 
+def result_contains_any(results, markers):
+    text = normalize_vendor_key(" ".join(str(value) for value in results.values()))
+    return any(normalize_vendor_key(marker) in text for marker in markers)
+
+
+def sales_override_for_item(item, results, context):
+    combined = normalize_vendor_key(" ".join([
+        str(item.get("risk", "")),
+        str(item.get("description", "")),
+        str(item.get("impact", "")),
+        str(item.get("recommendation", "")),
+        " ".join(str(value) for value in item.get("vendors", []) if value)
+        if isinstance(item.get("vendors"), list)
+        else str(item.get("vendors", "")),
+    ]))
+
+    has_fortinet = result_contains_any(results, ["fortinet", "fortigate", "forti"])
+    has_cloudflare = result_contains_any(results, ["cloudflare"])
+    has_m365 = result_contains_any(results, ["microsoft 365", "office 365", "m365", "exchange online"])
+
+    def has(*markers):
+        return any(normalize_vendor_key(marker) in combined for marker in markers)
+
+    if has("устаревш", "legacy", "windows xp", "windows 7", "windows 8", "windows server 2008", "2012 r2"):
+        return {
+            "priority": "P1",
+            "problem": "Устаревшие ОС требуют миграции, а не компенсации ИБ-продуктами",
+            "offer": (
+                "Основной проект - обновление или вывод устаревших Windows/Windows Server. "
+                "Если часть систем нельзя быстро обновить, параллельно провести vulnerability assessment, "
+                "изоляцию сегмента и контроль исключений до даты миграции."
+            ),
+            "trigger": item.get("impact") or "Устаревшие ОС не получают полноценные исправления и не должны закрываться покупкой EDR/DLP вместо миграции.",
+            "vendors": portfolio_vendors_by_categories(
+                ["Operating Systems", "VM"],
+                preferred=["Microsoft", "Qualys", "Tenable", "Rapid7"],
+            ),
+            "next_step": "Уточнить количество legacy-хостов, зависимые приложения, ограничения миграции и предложить план: обновление, изоляция, сканирование уязвимостей, контроль срока вывода.",
+            "source": item.get("source", "ИИ"),
+        }
+
+    if has("mfa", "многофактор", "2fa"):
+        return {
+            "priority": "P1",
+            "problem": "MFA для критичных доступов",
+            "offer": "Запустить MFA-проект для Microsoft 365, администраторов, VPN/удаленного доступа и критичных бизнес-систем; PAM рассматривать следующим этапом, а не вместо MFA.",
+            "trigger": item.get("impact") or "Microsoft 365 и критичные доступы без MFA дают высокий риск компрометации учетных записей.",
+            "vendors": portfolio_vendors_by_categories(
+                ["MFA"],
+                exclude=["ManageEngine"],
+                gap_text="Нет корректного MFA-вендора в матрице: добавьте FortiAuthenticator / Microsoft Entra ID / Cisco Duo",
+            ),
+            "next_step": "Сначала проверить Microsoft 365/Entra ID, FortiGate SSL VPN, администраторские учетные записи и исключения; затем предложить быстрый MFA-пилот.",
+            "source": item.get("source", "ИИ"),
+        }
+
+    if has("vulnerability", "уязв", "cve", "scanner", "сканер", "patch management"):
+        return {
+            "priority": "P1" if context.get("users", 0) >= 100 else "P2",
+            "problem": "Нужен управляемый цикл уязвимостей и обновлений",
+            "offer": "Vulnerability Management: инвентаризация активов, регулярное сканирование, SLA на критичные CVE и отчет по исключениям.",
+            "trigger": item.get("impact") or "Для парка 100+ АРМ и серверов ручной контроль CVE быстро теряет управляемость.",
+            "vendors": portfolio_vendors_by_categories(
+                ["VM"],
+                preferred=["Qualys", "Tenable", "Rapid7"],
+            ),
+            "next_step": "Предложить быстрый assessment на внешнем периметре, серверах и рабочих местах, затем показать топ критичных CVE и план закрытия.",
+            "source": item.get("source", "ИИ"),
+        }
+
+    if has("mail security", "почт", "email", "фишинг", "phishing"):
+        return {
+            "priority": "P1" if has_m365 else "P2",
+            "problem": "Защита облачной почты и anti-phishing",
+            "offer": "Усилить Microsoft 365 почту отдельным mail security/anti-phishing контуром: URL/attachment sandboxing, impersonation protection, DMARC-контроль и обучение пользователей.",
+            "trigger": item.get("impact") or "Microsoft 365 часто становится первой точкой атаки через фишинг и компрометацию учетных записей.",
+            "vendors": portfolio_vendors_by_categories(
+                ["Email"],
+                preferred=["Check Point", "Fortinet", "Trend Micro", "Forcepoint"],
+            ),
+            "next_step": "Проверить текущие политики M365, SPF/DKIM/DMARC, статистику фишинга и предложить пилот защиты почты.",
+            "source": item.get("source", "ИИ"),
+        }
+
+    if has("waf", "web application", "веб прилож", "owasp"):
+        return {
+            "priority": "P2",
+            "problem": item.get("risk") or "Публичные веб-сервисы требуют WAF",
+            "offer": "Провести экспресс-оценку web-периметра и текущих Cloudflare-политик; по результатам сравнить усиление действующего контура с FortiWeb/F5/Imperva и выбрать архитектуру WAF/CDN под критичные приложения.",
+            "trigger": item.get("impact") or "Интернет-магазин и личный кабинет формируют публичную поверхность атаки.",
+            "vendors": portfolio_vendors_by_categories(
+                ["WAF"],
+                preferred=["Fortinet", "Check Point", "Cloudflare", "F5", "Imperva"],
+                limit=4,
+            ),
+            "next_step": "Снять список публичных доменов, текущие Cloudflare-политики, критичные URL и предложить WAF health-check.",
+            "source": item.get("source", "ИИ"),
+        }
+
+    if has("ids", "ips", "сетевых атак", "сетевыми атаками"):
+        return {
+            "priority": "P3",
+            "problem": item.get("risk") or "IDS/IPS требует уточнения в рамках текущего NGFW",
+            "offer": "Проверить, используются ли IPS-профили на FortiGate/NGFW и есть ли потребность в отдельном IDS/IPS-контуре.",
+            "trigger": item.get("impact") or "В матрице портфеля нет отдельной категории IDS/IPS, поэтому нельзя подставлять произвольных производителей.",
+            "vendors": portfolio_vendors_by_categories(
+                ["IDS/IPS"],
+                gap_text="Нет категории IDS/IPS в матрице: добавьте производителей или используйте NGFW/IPS текущего стека",
+            ),
+            "next_step": "Уточнить модели NGFW, включенные IPS-профили, сегменты инспекции и текущие события блокировок.",
+            "source": item.get("source", "ИИ"),
+        }
+
+    if has("edr", "xdr", "endpoint", "конечн"):
+        return {
+            "priority": "P2",
+            "problem": item.get("risk") or "Endpoint-защита требует обнаружения и реагирования",
+            "offer": "EDR/XDR-пилот на критичных группах пользователей и серверах с регламентом реагирования и метриками MTTD/MTTR.",
+            "trigger": item.get("impact") or "EPP снижает базовый malware-риск, но не закрывает расследование сложных атак.",
+            "vendors": portfolio_vendors_by_categories(
+                ["EDR", "XDR"],
+                preferred=["Fortinet", "Check Point", "CrowdStrike", "Trend Micro"],
+                limit=4,
+            ),
+            "next_step": "Сравнить текущий EPP, определить пилотную группу и показать сценарии ransomware/lateral movement.",
+            "source": item.get("source", "ИИ"),
+        }
+
+    if has("siem", "soc", "mssp", "мониторинг событий"):
+        return {
+            "priority": "P2",
+            "problem": item.get("risk") or "Нужен управляемый мониторинг событий ИБ",
+            "offer": "Начать с MSSP/SOC или легкого SIEM-scope: FortiGate, Windows Server/AD, Microsoft 365, EPP/EDR, backup и web.",
+            "trigger": item.get("impact") or "Для 120 АРМ и 22 серверов реалистичнее начать с управляемого мониторинга, а не тяжелого enterprise-проекта.",
+            "vendors": portfolio_vendors_by_categories(
+                ["SIEM", "SOAR", "UEBA"],
+                preferred=["Fortinet", "IBM", "Splunk"],
+                limit=4,
+            ),
+            "next_step": "Согласовать минимальный scope источников логов и показать формат ежемесячного отчета по инцидентам.",
+            "source": item.get("source", "ИИ"),
+        }
+
+    if has("sast", "dast", "appsec", "разработ"):
+        return {
+            "priority": "P3",
+            "problem": item.get("risk") or "Безопасность разработки требует уточнения",
+            "offer": "AppSec assessment: определить реальные языки, CI/CD, публичные приложения и только после этого выбирать SAST/DAST/SCA.",
+            "trigger": item.get("impact") or "Без фактов о процессе разработки нельзя подбирать общих ИБ-вендоров вместо AppSec-инструментов.",
+            "vendors": portfolio_vendors_by_categories(
+                ["SAST", "DAST", "SCA", "Application Security"],
+                preferred=["Checkmarx", "HCL AppScan", "Positive Technologies", "Qualys"],
+                gap_text="Нет AppSec-вендоров в матрице: добавьте SAST/DAST/SCA производителей",
+            ),
+            "next_step": "Уточнить наличие разработки, репозитории, CI/CD и критичные приложения; затем предложить пилот SAST/DAST.",
+            "source": item.get("source", "ИИ"),
+        }
+
+    if has("схд", "storage", "raid", "snapshot", "iops", "latency"):
+        return {
+            "priority": "P3",
+            "problem": "СХД: требуется проверка capacity/performance, без вывода о проблеме надежности",
+            "offer": "Не продавать замену СХД без фактов. Предложить health-check: утилизация, latency/IOPS, состояние RAID, snapshot-политики, backup integration.",
+            "trigger": "В анкете есть RAID, диски, Veeam/Snapshots; доказательств отказов или нехватки производительности нет.",
+            "vendors": portfolio_vendors_by_categories(
+                ["Backup", "Storage"],
+                preferred=["Veeam"],
+            ),
+            "next_step": "Запросить модель СХД, текущую утилизацию, метрики latency/IOPS, расписание snapshot и результаты тестов восстановления.",
+            "source": item.get("source", "ИИ"),
+        }
+
+    if has("wifi", "wi fi", "wi-fi", "nac", "сегментац", "vlan", "acl"):
+        return {
+            "priority": "P3",
+            "problem": "Требуется уточнить архитектуру сегментации сети и Wi-Fi",
+            "offer": "Не трактовать отсутствие NAC как отсутствие сегментации. Проверить VLAN/ACL/FortiGate policies, guest Wi-Fi, доступ AP и правила между сегментами.",
+            "trigger": "В анкете есть UniFi/Wi-Fi 6/FortiGate/Cisco/Huawei, но нет фактов о VLAN/ACL и межсегментных политиках.",
+            "vendors": portfolio_vendors_by_categories(
+                ["NGFW", "Network Equipment", "NAC"],
+                preferred=["Fortinet", "Cisco", "Huawei"],
+            ),
+            "next_step": "Попросить схему VLAN, правила FortiGate, SSID/guest Wi-Fi и список критичных сегментов.",
+            "source": item.get("source", "ИИ"),
+        }
+
+    if has("pam", "привилег"):
+        return {
+            "priority": "P3",
+            "problem": item.get("risk") or "PAM для привилегированных учетных записей",
+            "offer": "PAM рассматривать после MFA: инвентаризация админов, vault, session recording и регулярный пересмотр прав.",
+            "trigger": item.get("impact") or "PAM важен для серверов и критичных систем, но коммерчески должен идти после закрытия MFA.",
+            "vendors": portfolio_vendors_by_categories(
+                ["PAM"],
+                preferred=["Wallix", "CyberArk", "BeyondTrust"],
+                exclude=["ManageEngine"],
+            ),
+            "next_step": "Сначала закрыть MFA, затем собрать список привилегированных учетных записей и предложить PAM-пилот.",
+            "source": item.get("source", "ИИ"),
+        }
+
+    if has("change management", "configuration management", "cmdb", "управление изменениями", "конфигурац"):
+        return {
+            "priority": "P3",
+            "problem": item.get("risk") or "Управление изменениями требует формализации",
+            "offer": "Проводить как процессный ITSM/CMDB воркшоп, а не как первоочередную продуктовую продажу.",
+            "trigger": item.get("impact") or "Без интервью нельзя утверждать, что процесс отсутствует; можно только проверить зрелость.",
+            "vendors": portfolio_vendors_by_categories(
+                ["ITSM", "ITAM"],
+                preferred=["ManageEngine"],
+                gap_text="Нет ITSM/CMDB-вендора в матрице",
+            ),
+            "next_step": "Уточнить, где ведутся заявки/изменения/активы, и предложить короткий ITSM maturity workshop.",
+            "source": item.get("source", "ИИ"),
+        }
+
+    return None
+
+
+def build_ai_first_sales_opportunities(risk_sources, results=None, context=None):
+    if not isinstance(risk_sources, list):
+        return []
+
+    results = results or {}
+    context = context or {}
+    opportunities = []
+    priority_order = {"P1": 1, "P2": 2, "P3": 3}
+    level_priority = {
+        "Критический": "P1",
+        "Высокий": "P1",
+        "Средний": "P2",
+        "Низкий": "P3",
+        "CRITICAL": "P1",
+        "HIGH": "P1",
+        "MEDIUM": "P2",
+        "LOW": "P3",
+    }
+
+    for item in risk_sources:
+        if not isinstance(item, dict):
+            continue
+        if item.get("source") != "ИИ":
+            continue
+
+        override = sales_override_for_item(item, results, context)
+        if override:
+            opportunities.append(override)
+            continue
+
+        vendors_text = portfolio_vendors_for_report_item(item)
+
+        risk = str(item.get("risk", "")).strip()
+        recommendation = str(item.get("recommendation", "")).strip()
+        if not risk or not recommendation:
+            continue
+
+        impact = str(item.get("impact") or item.get("description") or "").strip()
+        area = str(item.get("area") or "ИТ/ИБ").strip()
+        priority = level_priority.get(str(item.get("level", "")).strip(), "P2")
+
+        opportunities.append({
+            "priority": priority,
+            "problem": risk,
+            "offer": recommendation,
+            "trigger": impact or "Вывод сформирован по данным анкеты и экспертному анализу.",
+            "vendors": vendors_text or "-",
+            "next_step": (
+                f"Согласовать с заказчиком факты по домену {area}, подтвердить владельца риска, "
+                "оценить текущие ограничения и подготовить короткий план внедрения с бюджетным диапазоном."
+            ),
+            "source": "ИИ",
+        })
+
+    return sorted(opportunities, key=lambda item: priority_order.get(item["priority"], 99))[:10]
+
+
+def ensure_sales_playbook_priorities(opportunities, results, context):
+    opportunities = [item for item in opportunities if isinstance(item, dict)]
+
+    def existing_has(*markers):
+        text = normalize_vendor_key(" ".join(
+            " ".join(str(item.get(field, "")) for field in ("problem", "offer", "trigger", "vendors"))
+            for item in opportunities
+        ))
+        return any(normalize_vendor_key(marker) in text for marker in markers)
+
+    def add_if_missing(markers, pseudo_item):
+        if not existing_has(*markers):
+            item = sales_override_for_item(
+                {**pseudo_item, "source": "Экспертная приоритизация"},
+                results,
+                context
+            )
+            if item:
+                opportunities.append(item)
+
+    if results.get("MFA") == "Нет":
+        add_if_missing(
+            ("mfa", "многофактор"),
+            {
+                "risk": "MFA отсутствует для критичных доступов",
+                "impact": "Компрометация учетных записей остается одним из наиболее вероятных сценариев атаки.",
+                "recommendation": "Включить MFA для Microsoft 365, VPN, администраторов и критичных систем.",
+                "vendors": ["MFA"],
+            }
+        )
+
+    if results.get("Patch Management") == "Нет" or results.get("ОС АРМ (Windows XP/Vista/7/8)", 0) or results.get("ОС Сервера (Windows Server 2008/2012 R2)", 0):
+        add_if_missing(
+            ("vulnerability", "уязв", "cve", "patch"),
+            {
+                "risk": "Vulnerability Management и контроль обновлений",
+                "impact": "Без регулярного сканирования и SLA критичные CVE могут оставаться открытыми.",
+                "recommendation": "Запустить vulnerability assessment и процесс устранения критичных уязвимостей.",
+                "vendors": ["Vulnerability Management"],
+            }
+        )
+
+    if results.get("Mail Security") == "Нет" and result_contains_any(results, ["Microsoft 365", "Office 365", "Exchange"]):
+        add_if_missing(
+            ("mail security", "почт", "фишинг"),
+            {
+                "risk": "Microsoft 365 требует усиления защиты почты",
+                "impact": "Фишинг и impersonation остаются основным входом в атаку.",
+                "recommendation": "Проверить SPF/DKIM/DMARC и запустить пилот защиты облачной почты.",
+                "vendors": ["Mail Security"],
+            }
+        )
+
+    if results.get("WAF") == "Нет" and context.get("has_public_web"):
+        add_if_missing(
+            ("waf", "web application", "веб"),
+            {
+                "risk": "Публичные web-сервисы требуют WAF",
+                "impact": "Интернет-магазин и личный кабинет увеличивают поверхность атаки.",
+                "recommendation": "Проверить текущий Cloudflare и рассмотреть WAF/FortiWeb/F5/Imperva.",
+                "vendors": ["WAF"],
+            }
+        )
+
+    if results.get("EDR") == "Нет":
+        add_if_missing(
+            ("edr", "xdr", "endpoint"),
+            {
+                "risk": "Endpoint-защита требует EDR/XDR",
+                "impact": "EPP не закрывает расследование сложных атак и lateral movement.",
+                "recommendation": "Провести EDR/XDR-пилот на критичных группах пользователей и серверов.",
+                "vendors": ["EDR/XDR"],
+            }
+        )
+
+    if results.get("SIEM") == "Нет" and not context.get("small_company"):
+        add_if_missing(
+            ("siem", "soc", "mssp"),
+            {
+                "risk": "SIEM/SOC/MSSP для критичных источников",
+                "impact": "Разрозненные журналы увеличивают время обнаружения и расследования.",
+                "recommendation": "Начать с MSSP/SOC или минимального SIEM-scope.",
+                "vendors": ["SIEM"],
+            }
+        )
+
+    if results.get("PAM") == "Нет" and (context.get("servers", 0) >= 10 or context.get("has_critical_systems")):
+        add_if_missing(
+            ("pam", "привилег"),
+            {
+                "risk": "PAM для привилегированных учетных записей",
+                "impact": "Администраторские доступы требуют отдельного контроля, но после MFA.",
+                "recommendation": "После MFA провести инвентаризацию админов и PAM-пилот.",
+                "vendors": ["PAM"],
+            }
+        )
+
+    priority_order = {"P1": 1, "P2": 2, "P3": 3}
+    seen = set()
+    cleaned = []
+    for item in sorted(opportunities, key=lambda row: priority_order.get(row.get("priority"), 99)):
+        key = risk_semantic_key({
+            "risk": item.get("problem", ""),
+            "description": item.get("trigger", ""),
+            "recommendation": item.get("offer", ""),
+        })
+        if key and key in seen:
+            continue
+        cleaned.append(item)
+        seen.add(key)
+        if len(cleaned) >= 10:
+            break
+    return cleaned
+
+
+def sales_account_guidance(item):
+    key = risk_semantic_key({
+        "risk": item.get("problem", item.get("risk", "")),
+        "description": item.get("trigger", item.get("description", "")),
+        "impact": item.get("business_value", item.get("impact", "")),
+        "recommendation": item.get("offer", item.get("recommendation", "")),
+    })
+    profiles = {
+        "legacy_os": {
+            "business_value": "Снизить риск простоя и зависимости от неподдерживаемых платформ, зафиксировав контролируемый план вывода legacy-систем.",
+            "stakeholders": "ИТ-директор; владелец зависимого бизнес-приложения; инфраструктурная команда; финансы/закупки",
+            "qualification": "Количество legacy-узлов, зависимые приложения, допустимое окно миграции, владелец и целевая дата вывода.",
+            "meeting_goal": "Согласовать реестр legacy-систем и выбрать первый контур для миграции или временной изоляции.",
+        },
+        "mfa": {
+            "business_value": "Снизить вероятность захвата учетных записей без изменения основных бизнес-процессов.",
+            "stakeholders": "ИТ-директор; руководитель ИБ; владельцы Microsoft 365/AD/VPN; служба поддержки",
+            "qualification": "IdP, охват пользователей, критичные доступы, исключения, способы аутентификации и требования к пользовательскому опыту.",
+            "meeting_goal": "Определить 1-2 критичных контура для быстрого MFA-пилота и критерии его успешности.",
+        },
+        "patch": {
+            "business_value": "Сделать технический долг по уязвимостям измеримым и сократить время закрытия критичных CVE.",
+            "stakeholders": "ИТ-директор; руководители серверной и endpoint-команд; ИБ; владельцы критичных приложений",
+            "qualification": "Полнота инвентаризации, текущие окна обновлений, SLA по CVE, исключения и ответственные за remediation.",
+            "meeting_goal": "Согласовать scope assessment и формат отчета, по которому будет принято решение о платформе или сервисе.",
+        },
+        "endpoint_detection": {
+            "business_value": "Сократить время обнаружения и локализации атак на рабочих местах и серверах.",
+            "stakeholders": "Руководитель ИБ; endpoint-команда; серверная команда; Service Desk; SOC/MSSP",
+            "qualification": "Текущий EPP, покрытие агентов, сценарии реагирования, MTTD/MTTR, пилотная группа и доступный ресурс мониторинга.",
+            "meeting_goal": "Выбрать пилотную группу и 3-4 сценария проверки EDR/MDR без дублирования действующего EPP.",
+        },
+        "mail": {
+            "business_value": "Снизить риск фишинга, подмены отправителя и компрометации облачной почты.",
+            "stakeholders": "Руководитель ИБ; владелец Microsoft 365/почты; Service Desk; HR/обучение",
+            "qualification": "SPF/DKIM/DMARC, статистика фишинга, текущие политики M365, VIP-пользователи и процесс разбора писем.",
+            "meeting_goal": "Подтвердить сценарии атак на почту и согласовать ограниченный пилот с измеримыми метриками.",
+        },
+        "siem_soc": {
+            "business_value": "Сделать обнаружение и расследование инцидентов управляемым на критичных источниках событий.",
+            "stakeholders": "Руководитель ИБ; ИТ-директор; владельцы AD/NGFW/серверов/endpoint; SOC или MSSP",
+            "qualification": "Критичные источники, объем событий, use cases, режим дежурства, SLA реагирования и доступный операционный ресурс.",
+            "meeting_goal": "Определить минимальный scope мониторинга и выбрать модель: собственная эксплуатация, SOC или MSSP.",
+        },
+        "web_waf": {
+            "business_value": "Снизить риск простоя и компрометации публичных клиентских сервисов.",
+            "stakeholders": "Владелец e-commerce/продукта; ИБ; разработка; DevOps; инфраструктура",
+            "qualification": "Домены, критичные URL/API, текущие Cloudflare-политики, OWASP-события, требования к доступности и владельцы приложений.",
+            "meeting_goal": "Согласовать web health-check и перечень приложений для пилота WAF/CDN.",
+        },
+        "segmentation": {
+            "business_value": "Подтвердить фактическую изоляцию критичных контуров до обсуждения продукта или проекта изменений.",
+            "stakeholders": "Сетевой архитектор; владелец NGFW; ИБ; владельцы серверного, пользовательского и гостевого контуров",
+            "qualification": "Схема VLAN/VRF, ACL, зоны NGFW, матрица потоков, guest Wi-Fi и правила доступа к критичным сегментам.",
+            "meeting_goal": "Провести архитектурную сверку и отделить подтвержденные разрывы от предположений анкеты.",
+        },
+        "it_monitoring": {
+            "business_value": "Сократить время обнаружения деградаций и перевести доступность сервисов в измеримые показатели.",
+            "stakeholders": "ИТ-директор; инфраструктурная команда; Service Desk; владельцы ERP/CRM и других критичных сервисов",
+            "qualification": "Карта сервисов, текущие инструменты, пороги, on-call, SLA, отчеты по доступности и capacity.",
+            "meeting_goal": "Выбрать 3-5 критичных сервисов и согласовать monitoring assessment с целевыми метриками.",
+        },
+    }
+    return profiles.get(key, {
+        "business_value": "Перевести выявленную зону риска в проверяемый план с владельцем, сроком и критерием результата.",
+        "stakeholders": "ИТ-директор; руководитель ИБ; технический владелец; владелец затронутого бизнес-процесса",
+        "qualification": "Текущий процесс, фактический разрыв, бизнес-влияние, владелец, срок, бюджетный контур и критерий выбора.",
+        "meeting_goal": "Подтвердить проблему и согласовать следующий артефакт: assessment, воркшоп, пилот или расчет проекта.",
+    })
+
+
 def build_sales_conversation_pack(c_info, results, context, roadmap_items, opportunities):
     company = c_info.get("Наименование компании", "клиент")
     users = context.get("users", 0)
     servers = context.get("servers", 0)
-    profile_title, profile_text = infrastructure_profile(context)
+    _, profile_text = infrastructure_profile(context)
 
     pains = []
 
@@ -5156,6 +5835,17 @@ def build_sales_conversation_pack(c_info, results, context, roadmap_items, oppor
             "commercial_angle": commercial_angle,
             "discovery_question": discovery_question,
         })
+
+    legacy_arm = int(results.get("ОС АРМ (Windows XP/Vista/7/8)", 0) or 0)
+    legacy_servers = int(results.get("ОС Сервера (Windows Server 2008/2012 R2)", 0) or 0)
+    if legacy_arm or legacy_servers:
+        add_pain(
+            "P1",
+            "Неподдерживаемые операционные системы создают технический долг с фиксированным сроком вывода.",
+            f"В анкете указано: {russian_count(legacy_arm, 'legacy-АРМ', 'legacy-АРМ', 'legacy-АРМ')} и {russian_count(legacy_servers, 'legacy-сервер', 'legacy-сервера', 'legacy-серверов')}.",
+            "Программа миграции legacy ОС с временной изоляцией и контролем исключений.",
+            "Какие приложения или оборудование удерживают legacy ОС и какая дата вывода реалистична для каждого узла?"
+        )
 
     if results.get("MFA") == "Нет":
         add_pain(
@@ -5187,7 +5877,7 @@ def build_sales_conversation_pack(c_info, results, context, roadmap_items, oppor
         add_pain(
             "P1",
             "Риск эксплуатации известных уязвимостей растет быстрее, чем команда успевает обновлять вручную.",
-            f"Масштаб: {users} АРМ, {servers} серверов; централизованный patch management не указан.",
+            f"В анкете указано {russian_count(users, 'АРМ', 'АРМ', 'АРМ')} и {russian_count(servers, 'сервер', 'сервера', 'серверов')}; централизованный patch management не указан.",
             "Инвентаризация, vulnerability/patch management, регулярный отчет по критичным CVE.",
             "Как сейчас принимается решение, какие обновления ставить срочно, а какие можно отложить?"
         )
@@ -5237,34 +5927,104 @@ def build_sales_conversation_pack(c_info, results, context, roadmap_items, oppor
             "Какая зона сейчас больше всего беспокоит бизнес: доступность, безопасность, производительность или compliance?"
         )
 
+    primary_opportunity = opportunities[0] if opportunities else {
+        "offer": pains[0]["commercial_angle"],
+        "next_step": "Провести экспертный воркшоп и подтвердить приоритет.",
+    }
+    primary_guidance = sales_account_guidance(primary_opportunity)
+    primary_key = risk_semantic_key({
+        "risk": primary_opportunity.get("problem", ""),
+        "description": primary_opportunity.get("trigger", ""),
+        "recommendation": primary_opportunity.get("offer", ""),
+    })
+    primary_pain = next(
+        (
+            pain for pain in pains
+            if risk_semantic_key({
+                "risk": pain.get("pain", ""),
+                "description": pain.get("evidence", ""),
+                "recommendation": pain.get("commercial_angle", ""),
+            }) == primary_key
+        ),
+        pains[0],
+    )
+
     call_script = [
         {
-            "stage": "Открытие",
+            "stage": "Подготовка",
+            "goal": "Войти в разговор с гипотезой, а не с каталогом продуктов.",
             "talk_track": (
-                f"Мы посмотрели анкету {company}. По масштабу это {profile_title.lower()}: "
-                f"{users} АРМ и {servers} серверов. Цель звонка - не продавать набор продуктов, "
-                "а подтвердить 2-3 приоритета, которые быстрее всего снизят риск."
+                f"До звонка: проверить роль контакта, выбрать одну P1-гипотезу, подготовить 2 факта из анкеты "
+                f"и определить желаемый следующий шаг. Зафиксировано: {russian_count(users, 'АРМ', 'АРМ', 'АРМ')}, "
+                f"{russian_count(servers, 'сервер', 'сервера', 'серверов')}."
             )
         },
         {
-            "stage": "Подтверждение боли",
+            "stage": "Открытие и разрешение",
+            "goal": "Согласовать формат и получить право задавать вопросы.",
             "talk_track": (
-                f"Главная гипотеза: {pains[0]['pain']} Основание: {pains[0]['evidence']} "
-                "Правильно ли мы поняли ситуацию, или внутри есть компенсирующие меры?"
+                f"Мы изучили анкету {company}. В ней указано {russian_count(users, 'АРМ', 'АРМ', 'АРМ')} и "
+                f"{russian_count(servers, 'сервер', 'сервера', 'серверов')}. "
+                "Предлагаю за 20 минут проверить две гипотезы из отчета, понять их влияние на бизнес "
+                "и решить, нужен ли отдельный технический разбор. Подходит такой формат?"
             )
         },
         {
-            "stage": "Переход к решению",
+            "stage": "Подтверждение факта",
+            "goal": "Отделить факт анкеты от предположения.",
             "talk_track": (
-                f"Логичный первый шаг - {pains[0]['commercial_angle']} "
-                "Мы можем начать с короткого assessment/pilot, чтобы не запускать тяжелый проект без подтверждения эффекта."
+                f"Первая гипотеза: {primary_pain['pain']} Основание: {primary_pain['evidence']} "
+                "Что из этого подтверждается, а какие компенсирующие меры не попали в анкету?"
             )
         },
         {
-            "stage": "Закрытие на следующий шаг",
+            "stage": "Бизнес-влияние",
+            "goal": "Связать техническую тему с приоритетом заказчика.",
             "talk_track": (
-                "Предлагаю 45-минутную встречу с ИТ/ИБ: подтверждаем scope, фиксируем текущие ограничения "
-                "и готовим короткий план действий/КП по первому приоритету."
+                f"Если этот сценарий реализуется, какой эффект будет наиболее чувствительным: простой, "
+                f"потеря данных, влияние на клиентов или нагрузка на команду? Для нашей гипотезы ценность такова: "
+                f"{primary_guidance['business_value']}"
+            )
+        },
+        {
+            "stage": "Текущий подход",
+            "goal": "Понять процесс, инструменты и ограничения.",
+            "talk_track": (
+                f"Как сейчас управляется эта зона, кто отвечает за результат и по какой метрике видно, "
+                f"что контроль работает? Для квалификации важно уточнить: {primary_guidance['qualification']}"
+            )
+        },
+        {
+            "stage": "Почему сейчас",
+            "goal": "Проверить срочность без давления.",
+            "talk_track": (
+                "Есть ли событие, которое задает срок: аудит, инцидент, продление лицензий, новый сервис, "
+                "миграция, требование руководства или бюджетный цикл?"
+            )
+        },
+        {
+            "stage": "Гипотеза решения",
+            "goal": "Предложить следующий шаг, не преждевременную спецификацию.",
+            "talk_track": (
+                f"С учетом подтвержденных фактов логичный первый шаг: {primary_opportunity.get('offer', pains[0]['commercial_angle'])} "
+                "Предлагаю сначала согласовать scope и критерии результата, а затем сравнивать архитектуру и производителей."
+            )
+        },
+        {
+            "stage": "Карта решения",
+            "goal": "Выявить ЛПР, технических участников и порядок закупки.",
+            "talk_track": (
+                f"Кого нужно подключить, чтобы подтвердить архитектуру и принять решение? Обычно здесь участвуют: "
+                f"{primary_guidance['stakeholders']}. Как у вас устроен технический выбор и бюджетное согласование?"
+            )
+        },
+        {
+            "stage": "Закрытие и recap",
+            "goal": "Зафиксировать конкретный взаимный следующий шаг.",
+            "talk_track": (
+                f"Предлагаю следующий шаг: {primary_guidance['meeting_goal']} Со своей стороны мы подготовим "
+                "повестку и список данных; со стороны заказчика нужны технический владелец и подтверждение фактов. "
+                "После встречи фиксируем решение: пилот, assessment, расчет проекта или закрытие гипотезы."
             )
         },
     ]
@@ -5272,19 +6032,22 @@ def build_sales_conversation_pack(c_info, results, context, roadmap_items, oppor
     questions = []
     seen_questions = set()
 
-    def add_question(topic, question):
+    def add_question(topic, question, purpose="Подтвердить факт и влияние до выбора решения."):
         normalized = question.strip().lower()
         if normalized in seen_questions:
             return
-        questions.append((topic, question))
+        questions.append((topic, question, purpose))
         seen_questions.add(normalized)
 
     for pain in pains[:4]:
         add_question(pain["priority"] + " / " + pain["commercial_angle"].split(",")[0][:28], pain["discovery_question"])
 
-    add_question("Приоритет бизнеса", "Какой риск из отчета для вас самый болезненный: простой сервиса, утечка данных, компрометация учеток или ручная эксплуатация?")
-    add_question("Текущий бюджет", "На что уже заложен бюджет: продление текущих продуктов, новый пилот, аудит/assessment или сервисная модель?")
-    add_question("Критичные сервисы", "Какие 3 системы нужно защищать и восстанавливать первыми, если случится инцидент?")
+    add_question("Приоритет бизнеса", "Какой сценарий наиболее чувствителен: простой сервиса, потеря данных, влияние на клиентов или ручная нагрузка на команду?", "Определить бизнес-драйвер инициативы.")
+    add_question("Критичные сервисы", "Какие 3 системы нужно защищать и восстанавливать первыми, если случится инцидент?", "Определить scope и владельцев сервисов.")
+    add_question("Почему сейчас", "Какое событие задает срок: аудит, инцидент, продление, новый проект, требование руководства или бюджетный цикл?", "Проверить срочность и реальный trigger сделки.")
+    add_question("Процесс решения", "Кто подтверждает технические требования, кто утверждает бюджет и кто может остановить проект?", "Построить карту влияния и ЛПР.")
+    add_question("Критерии выбора", "По каким критериям будет принято решение: функциональность, интеграция, сервис, локальная экспертиза, сроки или стоимость владения?", "Понять критерии оценки и конкурентную позицию.")
+    add_question("Бюджетный контур", "Инициатива уже включена в бюджет или сначала нужен assessment и обоснование для руководства?", "Выбрать корректный коммерческий следующий шаг.")
 
     if results.get("Patch Management") == "Нет":
         add_question("Patch / CVE", "Есть ли сейчас отчет, какие критичные CVE открыты на АРМ и серверах дольше допустимого срока?")
@@ -5301,34 +6064,52 @@ def build_sales_conversation_pack(c_info, results, context, roadmap_items, oppor
     if context.get("has_development"):
         add_question("Разработка", "Где в процессе релиза можно поставить security gate: зависимости, SAST, DAST или ручной review?")
 
-    questions = questions[:10]
+    questions = questions[:16]
 
     objections = [
         (
             "У нас уже есть антивирус/NGFW",
-            "Согласиться и развести уровни: EPP/NGFW - базовая защита, а вопрос отчета про обнаружение, расследование, доступы, backup и управляемость."
+            "Признать действующую инвестицию и уточнить покрытие: задача не заменить продукт, а проверить телеметрию, сценарии реагирования, исключения и измеримый результат.",
+            "Какие сценарии текущий стек уже закрывает и какой отчет это подтверждает?"
         ),
         (
             "Сейчас нет бюджета",
-            "Предложить assessment/pilot с ограниченным scope и показать, какие риски можно закрыть быстро без enterprise-проекта."
+            "Не спорить с бюджетом. Разделить обязательный результат и способ его достижения; предложить assessment с ограниченным scope для расчета эффекта и бюджета следующего цикла.",
+            "Какой артефакт поможет защитить инициативу перед руководством: расчет риска, roadmap, TCO или результаты пилота?"
         ),
         (
-            "Мы маленькая компания, SIEM нам не нужен",
-            "Подтвердить: тяжелый SIEM не нужен как первый шаг. Предложить минимальный сбор критичных логов или управляемый сервис."
+            "Полноценный SIEM для нашего контура избыточен",
+            "Согласиться, что продукт не является целью. Вернуться к требуемому результату: какие критичные события нужно видеть, кто реагирует и в какой срок; затем сравнить минимальный scope и MSSP.",
+            "Какие 5-7 сценариев обнаружения действительно важны и кто сегодня их разбирает?"
         ),
         (
             "Все работает, инцидентов не было",
-            "Сместить разговор на проверяемость: тест восстановления, отчет по критичным CVE, MFA для админов, мониторинг событий."
+            "Не оспаривать опыт клиента. Перевести разговор к проверяемости: тест восстановления, отчет по критичным CVE, покрытие MFA и время реакции на контрольный сценарий.",
+            "Какой последний тест или отчет подтверждает, что критичный сценарий будет обнаружен и восстановлен в целевой срок?"
+        ),
+        (
+            "У нас уже есть действующий поставщик",
+            "Не атаковать поставщика. Уточнить, где именно есть разрыв: покрытие, эксплуатация, лицензии, интеграция или сервис; предложить независимую проверку или дополнение существующего стека.",
+            "Что вы хотели бы улучшить в текущем решении, не меняя его без необходимости?"
+        ),
+        (
+            "У команды нет ресурса на новый проект",
+            "Предложить поэтапный scope, сервисную модель и четкое разделение ответственности; оценить нагрузку клиента до пилота.",
+            "Какие операции вы готовы оставить внутри, а какие разумно передать партнеру или MSSP?"
         ),
     ]
 
     next_steps = []
     for item in opportunities[:5]:
+        guidance = sales_account_guidance(item)
         next_steps.append({
             "priority": item["priority"],
             "step": item["next_step"],
             "offer": item["offer"],
-            "success_criteria": "Подтвержден scope, владелец со стороны клиента и понятный следующий артефакт: пилот, assessment или КП.",
+            "stakeholders": guidance["stakeholders"],
+            "meeting_goal": guidance["meeting_goal"],
+            "seller_artifact": "Повестка встречи, список входных данных и одностраничная гипотеза ценности без преждевременной спецификации.",
+            "success_criteria": "Подтверждены факт, бизнес-влияние, владелец, срок и следующий взаимный шаг: assessment, пилот, расчет проекта или закрытие гипотезы.",
         })
     if not next_steps and roadmap_items:
         for item in roadmap_items[:3]:
@@ -5336,6 +6117,9 @@ def build_sales_conversation_pack(c_info, results, context, roadmap_items, oppor
                 "priority": item["priority"],
                 "step": item["action"],
                 "offer": "Экспертный воркшоп по roadmap",
+                "stakeholders": "ИТ-директор; руководитель ИБ; технические владельцы затронутых систем",
+                "meeting_goal": "Подтвердить приоритет, владельца и измеримый результат инициативы.",
+                "seller_artifact": "Повестка, карта вопросов и проект плана работ.",
                 "success_criteria": "Клиент подтвердил приоритет и согласовал следующий созвон с техническими владельцами.",
             })
 
@@ -5365,8 +6149,9 @@ def build_expert_conclusion(results, context, final_score, domain_scores, roadma
 
     conclusion = [
         (
-            f"Инфраструктура классифицирована как: {profile_title.lower()} "
-            f"({users} АРМ, {servers} серверов). Рекомендации сформированы с учетом масштаба: "
+            f"Профиль ИТ-контура: {profile_title.lower()} "
+            f"({russian_count(users, 'АРМ', 'АРМ', 'АРМ')}, {russian_count(servers, 'сервер', 'сервера', 'серверов')}). "
+            "Рекомендации сформированы с учетом фактического состава: "
             "для текущего профиля приоритет отдается мерам, которые быстро повышают управляемость, "
             "восстановимость и контроль доступа без избыточного внедрения enterprise-платформ."
         )
@@ -5412,7 +6197,7 @@ def build_expert_conclusion(results, context, final_score, domain_scores, roadma
     if results.get("SIEM") == "Нет":
         if context.get("small_company"):
             conclusion.append(
-                "Полноценный SIEM не является первоочередной инвестицией для малого масштаба. "
+                "Полноценный SIEM не является первоочередной инвестицией при текущем составе источников. "
                 "Практичнее начать со сбора критичных журналов, ответственного за разбор событий "
                 "и понятного регламента реагирования."
             )
@@ -5604,13 +6389,14 @@ def risk_semantic_key(item):
         ("backup", ("backup", "резерв", "immutable", "ransomware")),
         ("web_waf", ("waf", "web", "веб", "owasp", "публичн")),
         ("pam", ("pam", "привилегирован", "администраторск")),
-        ("dlp", ("dlp", "утеч", "конфиденциальн")),
-        ("mail", ("mail", "почт", "фишинг")),
         ("segmentation", ("сегментац", "vlan", "lateral")),
+        ("dlp", ("dlp", "утеч", "эксфильтрац", "data loss")),
+        ("mail", ("mail", "почт", "фишинг")),
         ("it_monitoring", ("эксплуатационный мониторинг", "доступности", "производительности", "capacity")),
         ("virtualization", ("виртуализац", "гипервизор", "vm", "хост")),
         ("storage", ("схд", "storage", "raid", "snapshot", "iops")),
         ("dr", ("dr", "аварийн", "rto", "rpo", "восстановлен")),
+        ("appsec", ("sast", "dast", "appsec", "разработ", "безопасность прилож")),
         ("business_systems", ("erp", "crm", "бизнес-систем")),
     ]
 
@@ -5622,6 +6408,84 @@ def risk_semantic_key(item):
     return re.sub(r"\s+", " ", title)
 
 
+def network_segmentation_evidence(results):
+    network_values = []
+    for key, value in results.items():
+        key_text = str(key).lower()
+        if any(marker in key_text for marker in ("1.2", "сеть", "маршрут", "ngfw", "wifi", "wi-fi", "коммут")):
+            network_values.append(f"{key}: {value}")
+    text = " ".join(network_values).lower()
+    negative_markers = (
+        "нет сегментации", "сегментация отсутствует", "плоская сеть", "flat network",
+        "единый vlan", "один vlan для всех",
+    )
+    positive_markers = (
+        "vlan", "vrf", "acl", "межсегмент", "сегментац", "dmz",
+        "зоны ngfw", "firewall zone",
+    )
+    if any(marker in text for marker in negative_markers):
+        return "absent"
+    if any(marker in text for marker in positive_markers):
+        return "present"
+    return "unknown"
+
+
+def neutralize_company_scale_language(value):
+    text = str(value or "")
+    replacements = {
+        "маленькая компания": "компания с указанным ИТ-контуром",
+        "малая компания": "компания с указанным ИТ-контуром",
+        "средняя компания": "компания с указанным ИТ-контуром",
+        "крупная компания": "компания с указанным ИТ-контуром",
+        "малая инфраструктура": "инфраструктура указанного масштаба",
+        "средняя инфраструктура": "инфраструктура указанного масштаба",
+        "крупная инфраструктура": "инфраструктура указанного масштаба",
+        "малого масштаба": "указанного масштаба",
+    }
+    for source, target in replacements.items():
+        text = re.sub(re.escape(source), target, text, flags=re.IGNORECASE)
+    return text
+
+
+def sanitize_ai_audit_narrative(narrative, results):
+    if not isinstance(narrative, dict):
+        return {}
+
+    segmentation_status = network_segmentation_evidence(results)
+
+    def clean_text(value):
+        text = neutralize_company_scale_language(value)
+        lowered = text.lower()
+        if (
+            segmentation_status == "unknown"
+            and "сегментац" in lowered
+            and any(marker in lowered for marker in ("отсутств", "недостаточ", "ospf", "nac", "ztna"))
+        ):
+            return (
+                "Архитектура сетевой сегментации не подтверждена данными анкеты. "
+                "OSPF описывает маршрутизацию, а отсутствие NAC/ZTNA не доказывает отсутствие "
+                "VLAN, ACL, VRF или межсегментных политик; требуется анализ схемы и правил NGFW."
+            )
+        return text
+
+    cleaned = dict(narrative)
+    cleaned["executive_summary"] = [
+        clean_text(item) for item in narrative.get("executive_summary", []) if str(item).strip()
+    ]
+    cleaned["management_decisions"] = [
+        clean_text(item) for item in narrative.get("management_decisions", []) if str(item).strip()
+    ]
+    cleaned["audit_observations"] = [
+        {
+            "title": clean_text(item.get("title", "Наблюдение")),
+            "text": clean_text(item.get("text", "")),
+        }
+        for item in narrative.get("audit_observations", [])
+        if isinstance(item, dict) and str(item.get("text", "")).strip()
+    ]
+    return cleaned
+
+
 def professionalize_risk_item(item, results, context):
     source = item.get("_source", "Базовые правила")
     key = risk_semantic_key(item)
@@ -5630,9 +6494,36 @@ def professionalize_risk_item(item, results, context):
     legacy_arm = results.get("ОС АРМ (Windows XP/Vista/7/8)", 0)
     legacy_srv = results.get("ОС Сервера (Windows Server 2008/2012 R2)", 0)
 
+    if key == "segmentation" and network_segmentation_evidence(results) != "absent":
+        normalized = dict(item)
+        normalized.update({
+            "level": "LOW",
+            "risk": "Архитектура сетевой сегментации требует подтверждения",
+            "description": (
+                "Анкета описывает маршрутизацию и сетевое оборудование, но не содержит схемы VLAN/VRF, "
+                "ACL и межсегментных политик. OSPF не является признаком наличия или отсутствия сегментации, "
+                "а отсутствие NAC/ZTNA само по себе не подтверждает плоскую сеть."
+            ),
+            "impact": (
+                "Без схемы и правил фильтрации нельзя достоверно оценить возможность бокового перемещения "
+                "между пользовательскими, серверными, гостевыми и критичными сегментами."
+            ),
+            "recommendation": (
+                "Запросить актуальную схему VLAN/VRF и матрицу потоков; проверить ACL и политики NGFW между "
+                "сегментами; по результатам зафиксировать подтвержденные разрывы и только затем формировать проект улучшений."
+            ),
+            "vendors": [],
+            "regulators": ["CIS Controls", "ISO 27001"],
+            "_source": source,
+        })
+        return normalized
+
     if risk_source_label(source) == "ИИ":
         normalized = dict(item)
         normalized["_source"] = source
+        for field in ("risk", "description", "impact", "recommendation"):
+            if field in normalized:
+                normalized[field] = neutralize_company_scale_language(normalized[field])
         normalized.setdefault("level", "MEDIUM")
         normalized.setdefault("description", normalized.get("risk", "Риск требует дополнительного уточнения."))
         normalized.setdefault("impact", "Риск может повлиять на устойчивость ИТ/ИБ процессов.")
@@ -5649,8 +6540,8 @@ def professionalize_risk_item(item, results, context):
             "risk": "Устаревшие операционные системы требуют миграции или изоляции",
             "description": f"В анкете указаны устаревшие ОС: АРМ - {legacy_arm}, серверы - {legacy_srv}. Такие системы не получают полноценные исправления безопасности и не должны рассматриваться как обычные рабочие места.",
             "impact": "Уязвимости устаревших ОС повышают риск компрометации, невозможности установки актуальных агентов защиты и остановки связанных бизнес-процессов.",
-            "recommendation": "Составить реестр устаревших ОС; временно изолировать их отдельным сетевым сегментом и ограничить доступ; подготовить план миграции на поддерживаемые версии ОС с контрольной датой вывода из эксплуатации.",
-            "vendors": ["Microsoft", "Red Hat", "VMware"],
+            "recommendation": "Составить реестр устаревших ОС; подготовить план миграции на поддерживаемые версии Microsoft Windows/Windows Server; если часть систем нельзя обновить быстро, временно изолировать их и контролировать уязвимости до вывода из эксплуатации.",
+            "vendors": ["Microsoft", "Qualys", "Tenable", "Rapid7"],
             "regulators": ["CIS Controls", "ISO 27001", "NIST CSF"],
         },
         "endpoint_detection": {
@@ -5685,8 +6576,8 @@ def professionalize_risk_item(item, results, context):
             "risk": "Публичные веб-сервисы требуют специализированной защиты приложений",
             "description": "В анкете указаны интернет-магазин и личный кабинет, но WAF-защита и прикладные правила контроля атак не описаны.",
             "impact": "Публичные приложения остаются под риском OWASP-атак, бот-активности, утечки данных и нарушения доступности клиентских сервисов.",
-            "recommendation": "Провести экспресс-оценку web-периметра; включить WAF/CDN для публичных ресурсов с профилем под приложение; настроить регулярный разбор блокировок и связать WAF-события с процессом реагирования.",
-            "vendors": ["Imperva", "F5", "Cloudflare"],
+            "recommendation": "Провести экспресс-оценку web-периметра; проверить текущие Cloudflare-политики; включить WAF/CDN или FortiWeb/F5/Imperva для публичных ресурсов с профилем под приложение.",
+            "vendors": ["Cloudflare", "Fortinet", "F5", "Imperva"],
             "regulators": ["OWASP ASVS", "PCI DSS", "ISO 27001"],
         },
         "pam": {
@@ -5703,8 +6594,8 @@ def professionalize_risk_item(item, results, context):
             "risk": "Почтовый контур требует отдельной anti-phishing защиты",
             "description": "В анкете указана корпоративная почта, но специализированная защита от фишинга, вредоносных вложений и подмены отправителя не описана.",
             "impact": "Фишинговая атака может стать первичной точкой компрометации учетных записей, рабочих мест и облачных сервисов.",
-            "recommendation": "Проверить SPF/DKIM/DMARC и текущие политики фильтрации; внедрить mail security для вложений, URL и impersonation; проводить регулярные фишинг-симуляции и разбор результатов.",
-            "vendors": ["Trend Micro", "Forcepoint", "Barracuda"],
+            "recommendation": "Проверить SPF/DKIM/DMARC и политики Microsoft 365; внедрить mail security для вложений, URL и impersonation; проводить регулярные фишинг-симуляции и разбор результатов.",
+            "vendors": ["Check Point", "Fortinet", "Trend Micro", "Forcepoint"],
             "regulators": ["CIS Controls", "NIST CSF"],
         },
         "patch": {
@@ -5744,12 +6635,12 @@ def professionalize_risk_item(item, results, context):
             "regulators": ["ITIL", "ISO 20000"],
         },
         "storage": {
-            "level": "MEDIUM",
-            "risk": "Контроль емкости и производительности СХД не описан как процесс",
-            "description": "В анкете указана гибридная СХД, но не описаны пороги заполнения, latency/IOPS, snapshot-политики и план расширения емкости.",
-            "impact": "Рост данных или деградация производительности может повлиять на ERP, CRM, файловые сервисы и виртуальные машины.",
-            "recommendation": "Ввести capacity management для СХД; контролировать заполнение, latency и состояние RAID-групп; ежеквартально обновлять план расширения емкости и snapshot-политики.",
-            "vendors": ["Zabbix", "PRTG", "ManageEngine"],
+            "level": "LOW",
+            "risk": "СХД требует health-check, а не вывода о проблеме надежности",
+            "description": "В анкете указаны RAID, диски и snapshot/backup-практики, но не раскрыты метрики утилизации, latency/IOPS и запас емкости.",
+            "impact": "Без фактических метрик нельзя утверждать о проблемах производительности или надежности; корректнее подтвердить запас и правила контроля.",
+            "recommendation": "Проверить утилизацию, latency/IOPS, состояние RAID, snapshot-политики и связку с backup; по результатам определить, нужен ли capacity management или расширение.",
+            "vendors": ["Veeam"],
             "regulators": ["ITIL", "ISO 20000"],
         },
     }
@@ -5770,6 +6661,42 @@ def professionalize_risk_item(item, results, context):
         normalized["vendors"] = []
     if not normalized.get("regulators"):
         normalized["regulators"] = ["ISO 27001"]
+    return normalized
+
+
+def align_report_vendors(item, results, context):
+    normalized = dict(item)
+    key = risk_semantic_key(normalized)
+    facts_text = normalize_vendor_key(" ".join(str(value) for value in results.values()))
+    has_fortinet = any(marker in facts_text for marker in ("fortinet", "fortigate", "forti"))
+    has_cloudflare = "cloudflare" in facts_text
+
+    vendor_profiles = {
+        "legacy_os": ["Microsoft", "Qualys", "Tenable", "Rapid7"],
+        "mfa": ["Fortinet", "Microsoft", "Cisco"],
+        "patch": ["Qualys", "Tenable", "Rapid7", "Ivanti"],
+        "mail": ["Check Point", "Fortinet", "Trend Micro", "Forcepoint"],
+        "endpoint_detection": ["Fortinet", "Check Point", "CrowdStrike", "Trend Micro"],
+        "siem_soc": ["Fortinet", "IBM", "Splunk"],
+        "pam": ["Wallix", "CyberArk", "BeyondTrust"],
+        "appsec": ["Checkmarx", "HCL AppScan", "Positive Technologies", "Qualys"],
+        "storage": ["Veeam"],
+        "segmentation": ["Fortinet", "Cisco", "Huawei"],
+    }
+
+    if key == "web_waf":
+        vendors = []
+        if has_cloudflare:
+            vendors.append("Cloudflare")
+        if has_fortinet:
+            vendors.append("Fortinet")
+        vendors.extend(["F5", "Imperva"])
+        normalized["vendors"] = list(dict.fromkeys(vendors))
+        return normalized
+
+    if key in vendor_profiles:
+        normalized["vendors"] = vendor_profiles[key]
+
     return normalized
 
 
@@ -5812,6 +6739,7 @@ def build_report_risk_set(c_info, results, context):
             )
             continue
         item = professionalize_risk_item(item, results, context)
+        item = align_report_vendors(item, results, context)
         semantic_key = risk_semantic_key(item)
         if not semantic_key or semantic_key in seen_risks:
             continue
@@ -5845,7 +6773,11 @@ def build_report_risk_set(c_info, results, context):
         {
             "level": risk_level_label(item.get("level", "MEDIUM")),
             "risk": item.get("risk", "Риск"),
+            "description": item.get("description", "-"),
+            "impact": item.get("impact", "-"),
             "recommendation": item.get("recommendation", "-"),
+            "vendors": item.get("vendors", []),
+            "area": item.get("_ai_area", "ИТ/ИБ"),
             "source": risk_source_label(item.get("_source")),
         }
         for item in report_risks
@@ -5866,7 +6798,9 @@ def build_audit_observations(results, context, domain_scores, report_risks):
     observations = [
         (
             "Масштаб и управляемость",
-            f"Инфраструктура уже вышла за рамки малого контура: {users} АРМ и {servers} серверов требуют формализованных процессов обновлений, мониторинга, резервного копирования и контроля изменений."
+            f"В анкете зафиксировано {russian_count(users, 'АРМ', 'АРМ', 'АРМ')} и "
+            f"{russian_count(servers, 'сервер', 'сервера', 'серверов')}; такой состав требует формализованных процессов "
+            "обновлений, мониторинга, резервного копирования и контроля изменений."
         )
     ]
 
@@ -5982,8 +6916,10 @@ def make_expert_excel(c_info, results, final_score):
     domain_scores = calculate_domain_scores(results)
     context = build_context(results, c_info)
     profile_title, profile_text = infrastructure_profile(context)
+    it_assets_text, it_focus_text = it_context_summary(results, context)
     report_risks, ai_used = build_report_risk_set(c_info, results, context)
     ai_narrative = st.session_state.get("ai_audit_narrative", {}) if ai_used else {}
+    ai_narrative = sanitize_ai_audit_narrative(ai_narrative, results)
     top_risks = generate_rule_based_risks(
         results,
         context
@@ -6022,6 +6958,7 @@ def make_expert_excel(c_info, results, final_score):
         ("Сайт", c_info.get('Сайт компании', '-'), "Контакт", c_info.get('ФИО контактного лица', '-')),
         ("Зрелость ИБ", f"{maturity_icon} {maturity} / {final_score}%", "Профиль инфраструктуры", profile_title),
         ("Масштаб", profile_text, "Формат", "Автоматический экспертный аудит"),
+        ("ИТ-контекст", it_assets_text, "Фокус эксплуатации", it_focus_text),
     ]
 
     for row_idx, row_values in enumerate(company_rows, start=4):
@@ -6391,13 +7328,11 @@ def make_expert_excel(c_info, results, final_score):
                 ),
                 (
                     "Решения",
-                    ", ".join(item.get('vendors', []))
-                    if isinstance(item.get('vendors'), list)
-                    else "-"
+                    solution_categories_for_report_item(item)
                 ),
                 (
                     "Производители",
-                    manufacturers_for_report_item(item)
+                    portfolio_manufacturers_for_report_item(item)
                 )
             ]
 
@@ -6594,7 +7529,16 @@ def make_internal_sales_excel(c_info, results, final_score, client_report_bytes=
     domain_scores = calculate_domain_scores(results)
     rule_risks = generate_rule_based_risks(results, context)
     roadmap_items = build_contextual_roadmap(results, context, domain_scores, rule_risks)
-    sales_opportunities = build_sales_opportunities(results, context, roadmap_items)
+    risk_sources = st.session_state.get("last_report_risk_sources", [])
+    sales_opportunities = (
+        build_ai_first_sales_opportunities(risk_sources, results, context)
+        or build_sales_opportunities(results, context, roadmap_items)
+    )
+    sales_opportunities = ensure_sales_playbook_priorities(
+        sales_opportunities,
+        results,
+        context
+    )
     sales_pack = build_sales_conversation_pack(
         c_info,
         results,
@@ -6632,13 +7576,13 @@ def make_internal_sales_excel(c_info, results, final_score, client_report_bytes=
         sheet.auto_filter.ref = f"A{start_row}:{chr(64 + len(headers))}{max(row_idx - 1, start_row)}"
         return row_idx
 
-    ws.merge_cells('A1:G1')
+    ws.merge_cells('A1:J1')
     ws['A1'] = "ВНУТРЕННИЙ SALES PLAYBOOK ПО ИТОГАМ АУДИТА"
     ws['A1'].font = Font(bold=True, size=18, color="FFFFFF")
     ws['A1'].fill = dark_fill
     ws['A1'].alignment = Alignment(horizontal='center')
 
-    ws.merge_cells('A3:G3')
+    ws.merge_cells('A3:J3')
     ws['A3'] = (
         f"Компания: {c_info.get('Наименование компании', '-')} | "
         f"Город: {c_info.get('Город', '-')} | "
@@ -6661,7 +7605,7 @@ def make_internal_sales_excel(c_info, results, final_score, client_report_bytes=
         ("Зрелость ИБ", f"{final_score}%"),
     ]
 
-    ws.merge_cells('A5:G5')
+    ws.merge_cells('A5:J5')
     ws['A5'] = "ИНФОРМАЦИЯ О КОМПАНИИ"
     ws['A5'].font = Font(bold=True, color="FFFFFF")
     ws['A5'].fill = dark_fill
@@ -6672,25 +7616,42 @@ def make_internal_sales_excel(c_info, results, final_score, client_report_bytes=
         ws.cell(row=info_row, column=1, value=label).font = Font(bold=True)
         ws.cell(row=info_row, column=1).fill = gray_fill
         ws.cell(row=info_row, column=1).border = border
-        ws.merge_cells(start_row=info_row, start_column=2, end_row=info_row, end_column=7)
+        ws.merge_cells(start_row=info_row, start_column=2, end_row=info_row, end_column=10)
         value_cell = ws.cell(row=info_row, column=2, value=value)
         value_cell.border = border
         value_cell.alignment = Alignment(wrap_text=True, vertical='top')
-        for col_num in range(3, 8):
+        for col_num in range(3, 11):
             ws.cell(row=info_row, column=col_num).border = border
         info_row += 1
 
     headers = [
         "Приоритет",
-        "Проблема клиента",
+        "Гипотеза возможности",
+        "Факт / что подтвердить",
         "Что предложить",
-        "Почему это релевантно",
-        "Решения из портфеля",
+        "Ценность для клиента",
+        "Кого подключить",
+        "Производители из портфеля",
+        "Дистрибьюторы",
         "Следующий шаг сейла",
         "Источник",
     ]
-    headers.insert(5, "Дистрибьюторы")
-    header_row = info_row + 1
+    nav_row = info_row + 1
+    ws.merge_cells(start_row=nav_row, start_column=1, end_row=nav_row, end_column=10)
+    nav_cell = ws.cell(
+        row=nav_row,
+        column=1,
+        value=(
+            "Навигация: основная таблица ниже отфильтровывается по приоритету, источнику и решениям; "
+            "первые три колонки и заголовок закреплены. Формулировки в колонке «Факт / что подтвердить» "
+            "нужно валидировать на встрече до подготовки спецификации."
+        )
+    )
+    nav_cell.fill = light_blue_fill
+    nav_cell.border = border
+    nav_cell.alignment = Alignment(wrap_text=True, vertical='top')
+
+    header_row = nav_row + 1
     row = header_row
     for col_num, header in enumerate(headers, 1):
         cell = ws.cell(row=row, column=col_num, value=header)
@@ -6703,11 +7664,14 @@ def make_internal_sales_excel(c_info, results, final_score, client_report_bytes=
     first_data_row = row
     priority_fills = {"P1": critical_fill, "P2": medium_fill, "P3": gray_fill}
     for item in sales_opportunities:
+        guidance = sales_account_guidance(item)
         values = [
             item["priority"],
             item["problem"],
-            item["offer"],
             item["trigger"],
+            item["offer"],
+            guidance["business_value"],
+            guidance["stakeholders"],
             item["vendors"],
             verified_distributors_for_vendors(item["vendors"]),
             item["next_step"],
@@ -6723,7 +7687,7 @@ def make_internal_sales_excel(c_info, results, final_score, client_report_bytes=
         row += 1
 
     if not sales_opportunities:
-        ws.merge_cells(start_row=first_data_row, start_column=1, end_row=first_data_row, end_column=8)
+        ws.merge_cells(start_row=first_data_row, start_column=1, end_row=first_data_row, end_column=10)
         cell = ws.cell(
             row=first_data_row,
             column=1,
@@ -6734,19 +7698,22 @@ def make_internal_sales_excel(c_info, results, final_score, client_report_bytes=
         cell.border = border
         row = first_data_row + 1
 
-    ws.freeze_panes = f"A{first_data_row}"
-    ws.auto_filter.ref = f"A{header_row}:H{max(row - 1, header_row)}"
+    ws.freeze_panes = f"D{first_data_row}"
+    ws.auto_filter.ref = f"A{header_row}:J{max(row - 1, header_row)}"
+    ws.sheet_view.zoomScale = 75
     ws.column_dimensions['A'].width = 14
     ws.column_dimensions['B'].width = 34
-    ws.column_dimensions['C'].width = 44
-    ws.column_dimensions['D'].width = 54
-    ws.column_dimensions['E'].width = 36
-    ws.column_dimensions['F'].width = 34
-    ws.column_dimensions['G'].width = 48
-    ws.column_dimensions['H'].width = 20
+    ws.column_dimensions['C'].width = 48
+    ws.column_dimensions['D'].width = 48
+    ws.column_dimensions['E'].width = 42
+    ws.column_dimensions['F'].width = 40
+    ws.column_dimensions['G'].width = 34
+    ws.column_dimensions['H'].width = 32
+    ws.column_dimensions['I'].width = 48
+    ws.column_dimensions['J'].width = 16
 
     source_row = row + 2
-    ws.merge_cells(start_row=source_row, start_column=1, end_row=source_row, end_column=8)
+    ws.merge_cells(start_row=source_row, start_column=1, end_row=source_row, end_column=10)
     ws.cell(row=source_row, column=1, value="ИСТОЧНИКИ РИСКОВ И РЕКОМЕНДАЦИЙ").font = white_font
     ws.cell(row=source_row, column=1).fill = dark_fill
     ws.cell(row=source_row, column=1).alignment = Alignment(horizontal='center')
@@ -6786,69 +7753,78 @@ def make_internal_sales_excel(c_info, results, final_score, client_report_bytes=
         cell.border = border
         cell.alignment = Alignment(wrap_text=True)
 
-    ws.column_dimensions['H'].width = 1
+    ws.sheet_view.showGridLines = False
 
     pains_ws = wb.create_sheet("04 Боли и гипотезы")
-    style_sales_header(pains_ws, "БОЛИ КЛИЕНТА И ГИПОТЕЗЫ ПРОДАЖ", 5)
-    pains_rows = [
-        [
+    style_sales_header(pains_ws, "КАРТА ГИПОТЕЗ И КВАЛИФИКАЦИИ", 7)
+    pains_rows = []
+    for item in sales_pack["pains"]:
+        guidance = sales_account_guidance({
+            "problem": item["pain"],
+            "trigger": item["evidence"],
+            "offer": item["commercial_angle"],
+        })
+        pains_rows.append([
             item["priority"],
             item["pain"],
             item["evidence"],
-            item["commercial_angle"],
+            guidance["business_value"],
+            guidance["stakeholders"],
             item["discovery_question"],
-        ]
-        for item in sales_pack["pains"]
-    ]
+            guidance["meeting_goal"],
+        ])
     write_table(
         pains_ws,
         3,
-        ["Приоритет", "Боль клиента", "Факт из анкеты", "Коммерческий заход", "Вопрос для подтверждения"],
+        ["Приоритет", "Гипотеза", "Факт из анкеты", "Ожидаемая ценность", "Карта участников", "Вопрос для подтверждения", "Цель первой встречи"],
         pains_rows,
-        {"A": 12, "B": 42, "C": 42, "D": 44, "E": 52}
+        {"A": 12, "B": 40, "C": 42, "D": 42, "E": 40, "F": 52, "G": 48}
     )
 
     script_ws = wb.create_sheet("05 Сценарий звонка")
-    style_sales_header(script_ws, "СЦЕНАРИЙ ПЕРВОГО ЗВОНКА", 3)
+    style_sales_header(script_ws, "СЦЕНАРИЙ ПЕРВОГО ЗВОНКА", 4)
     script_rows = [
-        [idx, item["stage"], item["talk_track"]]
+        [idx, item["stage"], item["goal"], item["talk_track"]]
         for idx, item in enumerate(sales_pack["call_script"], start=1)
     ]
     write_table(
         script_ws,
         3,
-        ["#", "Этап", "Что сказать"],
+        ["#", "Этап", "Цель этапа", "Что сказать / сделать"],
         script_rows,
-        {"A": 8, "B": 28, "C": 110}
+        {"A": 8, "B": 26, "C": 38, "D": 100}
     )
 
     questions_ws = wb.create_sheet("06 Вопросы")
-    style_sales_header(questions_ws, "ВОПРОСЫ ДЛЯ УТОЧНЕНИЯ НА ВСТРЕЧЕ", 2)
+    style_sales_header(questions_ws, "ВОПРОСЫ ДЛЯ КВАЛИФИКАЦИИ ВОЗМОЖНОСТИ", 3)
     write_table(
         questions_ws,
         3,
-        ["Тема", "Вопрос"],
-        [[topic, question] for topic, question in sales_pack["questions"]],
-        {"A": 28, "B": 110}
+        ["Тема", "Вопрос", "Зачем спрашиваем"],
+        [[topic, question, purpose] for topic, question, purpose in sales_pack["questions"]],
+        {"A": 28, "B": 90, "C": 55}
     )
 
     objections_ws = wb.create_sheet("07 Возражения")
-    style_sales_header(objections_ws, "ТИПОВЫЕ ВОЗРАЖЕНИЯ И ОТРАБОТКА", 2)
+    style_sales_header(objections_ws, "ТИПОВЫЕ ВОЗРАЖЕНИЯ И ОТРАБОТКА", 3)
     write_table(
         objections_ws,
         3,
-        ["Возражение", "Как отвечать"],
-        [[objection, answer] for objection, answer in sales_pack["objections"]],
-        {"A": 45, "B": 105}
+        ["Возражение", "Как отвечать", "Вопрос после ответа"],
+        [[objection, answer, follow_up] for objection, answer, follow_up in sales_pack["objections"]],
+        {"A": 40, "B": 80, "C": 60}
     )
 
     next_ws = wb.create_sheet("08 Следующие шаги")
-    style_sales_header(next_ws, "РЕКОМЕНДУЕМЫЕ СЛЕДУЮЩИЕ ШАГИ", 4)
+    style_sales_header(next_ws, "ПЛАН РАЗВИТИЯ ВОЗМОЖНОСТИ", 7)
     next_rows = [
         [
             item["priority"],
             item["offer"],
             item["step"],
+            item["stakeholders"],
+            item["meeting_goal"],
+            item["seller_artifact"],
             item["success_criteria"],
         ]
         for item in sales_pack["next_steps"]
@@ -6856,9 +7832,9 @@ def make_internal_sales_excel(c_info, results, final_score, client_report_bytes=
     write_table(
         next_ws,
         3,
-        ["Приоритет", "Предложение", "Действие сейла", "Критерий успеха"],
+        ["Приоритет", "Возможность", "Действие сейла", "Участники клиента", "Цель встречи", "Что подготовить сейлу", "Критерий перехода"],
         next_rows,
-        {"A": 12, "B": 42, "C": 60, "D": 70}
+        {"A": 12, "B": 42, "C": 55, "D": 40, "E": 48, "F": 52, "G": 60}
     )
 
     answers_ws = wb.create_sheet("09 Заполненная анкета")
@@ -7475,7 +8451,7 @@ if st.session_state.generation_state == "preparing":
     render_generation_live_panel("Подготовка экспертного анализа", active_step=1)
 
     # Имитируем лог-систему, как вы просили
-    st.info("⚙️ `[СИСТЕМА]`: Инициализация аналитического ядра Khalil Consulting v11.01...")
+    st.info(f"⚙️ `[СИСТЕМА]`: Инициализация аналитического ядра Khalil Consulting {APP_VERSION}...")
     st.success("⚙️ `[МАТРИЦА]`: Агрегация параметров ИТ-инфраструктуры успешно завершена.")
     
     st.markdown("---")
@@ -7659,4 +8635,4 @@ if st.session_state.generation_state == "finalized":
         st.session_state.telegram_generation_started_sent = False
         st.rerun()
 
-st.info("Khalil Audit System v11.01 | by Ivan Rudoy | Алматы 2026")
+st.info(f"Khalil Audit System {APP_VERSION} | by Ivan Rudoy | Алматы 2026")
