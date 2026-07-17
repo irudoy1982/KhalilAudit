@@ -104,7 +104,7 @@ def get_app_secret(name, default=None):
 
 
 APP_INSTANCE_DEFAULT = "Khalil"
-APP_VERSION = "12.10"
+APP_VERSION = "12.17"
 
 
 def get_app_instance_label():
@@ -274,6 +274,7 @@ def telegram_send_node(token, method, fields, files=None, timeout_seconds=10):
 
 
 def build_telegram_lead_text(client_info, final_score, sales_digest):
+    ai_provider = str(st.session_state.get("ai_provider_used", "Не определен")).strip() or "Не определен"
     return (
         "🚨 Новый запрос на аудит!\n"
         f"📌 Приложение: {get_app_instance_label()}\n"
@@ -286,6 +287,7 @@ def build_telegram_lead_text(client_info, final_score, sales_digest):
         f"👤 Контакт: {client_info.get('ФИО контактного лица', '-')}\n"
         f"💼 Должность: {client_info.get('Должность', '-')}\n"
         f"📊 Уровень зрелости: {final_score}%\n\n"
+        f"🤖 Анализ: {ai_provider}\n\n"
         f"💡 Что предложить первым:\n{sales_digest}"
     )
 
@@ -296,7 +298,7 @@ def build_telegram_ai_failure_text(client_info, final_score, ai_error):
         safe_error = safe_error[:1800] + "..."
 
     return (
-        "ℹ️ Gemini временно недоступен; отчет собран экспертным движком Khalil Audit\n"
+        "❌ Отчет заказчику не сформирован: ИИ-анализ временно недоступен\n"
         f"📌 Приложение: {get_app_instance_label()}\n"
         f"🏢 Компания: {client_info.get('Наименование компании', '-')}\n"
         f"📍 Город: {client_info.get('Город', '-')}\n"
@@ -377,30 +379,96 @@ def normalize_ai_risks_payload(payload):
         repaired_badness = repaired.count("Р") + repaired.count("С") + repaired.count("Ð") + repaired.count("Ñ")
         return repaired if repaired_badness < original_badness else text
 
+    def value_as_text(value, preferred_keys=()):
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            return repair_mojibake(value).strip()
+        if isinstance(value, (int, float, bool)):
+            return str(value).strip()
+        if isinstance(value, list):
+            parts = [value_as_text(part, preferred_keys) for part in value]
+            return "; ".join(part for part in parts if part)
+        if isinstance(value, dict):
+            for key in preferred_keys:
+                text = value_as_text(value.get(key), preferred_keys)
+                if text:
+                    return text
+            parts = [value_as_text(part, preferred_keys) for part in value.values()]
+            return "; ".join(part for part in parts if part)
+        return repair_mojibake(value).strip()
+
+    def first_text(item, keys, preferred_keys=()):
+        for key in keys:
+            text = value_as_text(item.get(key), preferred_keys)
+            if text:
+                return text
+        return ""
+
     def normalize_risk_item(item):
         if not isinstance(item, dict):
             return None
 
-        risk = repair_mojibake(item.get("risk", "")).strip()
-        recommendation = repair_mojibake(item.get("recommendation", "")).strip()
+        risk = first_text(
+            item,
+            ("risk", "title", "finding", "issue", "gap", "name"),
+            ("title", "risk", "text", "name"),
+        )
+        recommendation = first_text(
+            item,
+            (
+                "recommendation", "recommendations", "action", "actions",
+                "recommendation_steps", "remediation", "mitigation", "next_steps",
+            ),
+            ("action", "text", "step", "recommendation", "description"),
+        )
         if not risk or not recommendation:
             return None
 
         vendors = item.get("vendors", [])
-        regulators = item.get("regulators", [])
+        legal_ids = item.get("legal_ids", [])
+        frameworks = item.get("frameworks", [])
+        evidence = item.get("evidence", [])
         if not isinstance(vendors, list):
             vendors = [vendors] if vendors else []
-        if not isinstance(regulators, list):
-            regulators = [regulators] if regulators else []
+        if not isinstance(legal_ids, list):
+            legal_ids = [legal_ids] if legal_ids else []
+        if not isinstance(frameworks, list):
+            frameworks = [frameworks] if frameworks else []
+        if not isinstance(evidence, list):
+            evidence = [evidence] if evidence else []
+
+        normalized_legal_ids = [
+            str(value).strip()
+            for value in legal_ids
+            if str(value).strip() in REGULATORY_CATALOG
+        ][:3]
 
         return {
-            "level": repair_mojibake(item.get("level", "MEDIUM")).strip() or "MEDIUM",
+            "level": first_text(item, ("level", "severity", "priority")) or "MEDIUM",
+            "area": first_text(item, ("area", "domain", "category")),
             "risk": risk,
-            "description": repair_mojibake(item.get("description", risk)).strip() or risk,
-            "impact": repair_mojibake(item.get("impact", "Риск может привести к снижению устойчивости ИТ/ИБ процессов.")).strip(),
+            "description": first_text(
+                item,
+                ("description", "observation", "finding_details", "details", "context"),
+                ("text", "description", "details"),
+            ) or risk,
+            "impact": first_text(
+                item,
+                ("impact", "business_impact", "consequence", "consequences"),
+                ("text", "impact", "description"),
+            ) or "Риск может привести к снижению устойчивости ИТ/ИБ процессов.",
             "recommendation": recommendation,
             "vendors": [repair_mojibake(value).strip() for value in vendors if repair_mojibake(value).strip()][:3],
-            "regulators": [repair_mojibake(value).strip() for value in regulators if repair_mojibake(value).strip()][:3],
+            "legal_ids": normalized_legal_ids,
+            "regulators": [REGULATORY_CATALOG[value]["short"] for value in normalized_legal_ids],
+            "frameworks": [repair_mojibake(value).strip() for value in frameworks if repair_mojibake(value).strip()][:3],
+            "evidence": [repair_mojibake(value).strip() for value in evidence if repair_mojibake(value).strip()][:3],
+            "success_metric": first_text(
+                item,
+                ("success_metric", "metric", "target", "acceptance_criteria", "kpi"),
+                ("text", "metric", "target", "value"),
+            ),
         }
 
     def collect_from_list(value, source_area="ИИ"):
@@ -410,7 +478,8 @@ def normalize_ai_risks_payload(payload):
         for item in value:
             normalized = normalize_risk_item(item)
             if normalized:
-                normalized["_ai_area"] = source_area
+                item_area = str(normalized.get("area", "")).strip().upper()
+                normalized["_ai_area"] = item_area if item_area in {"ИТ", "ИБ"} else source_area
                 normalized_items.append(normalized)
         return normalized_items
 
@@ -435,6 +504,13 @@ def normalize_ai_risks_payload(payload):
         if combined:
             return combined
 
+        for container_key in ("analysis", "audit", "report", "result", "findings"):
+            nested = payload.get(container_key)
+            if isinstance(nested, (dict, list)):
+                combined.extend(normalize_ai_risks_payload(nested))
+        if combined:
+            return combined
+
         for key in ("risks", "recommendations", "items", "data"):
             value = payload.get(key)
             if isinstance(value, list):
@@ -445,6 +521,27 @@ def normalize_ai_risks_payload(payload):
                 ]
 
     return []
+
+
+def count_ai_risk_candidates(payload):
+    if isinstance(payload, list):
+        return sum(isinstance(item, dict) for item in payload)
+    if not isinstance(payload, dict):
+        return 0
+
+    total = 0
+    for key in (
+        "it_recommendations", "security_recommendations", "risks",
+        "recommendations", "items", "data", "findings",
+    ):
+        value = payload.get(key)
+        if isinstance(value, list):
+            total += sum(isinstance(item, dict) for item in value)
+    for key in ("analysis", "audit", "report", "result"):
+        value = payload.get(key)
+        if isinstance(value, (dict, list)):
+            total += count_ai_risk_candidates(value)
+    return total
 
 
 def normalize_ai_audit_narrative(payload):
@@ -514,6 +611,9 @@ def normalize_ai_audit_narrative(payload):
                 "rationale": rationale or "Мера снижает выявленный риск и повышает управляемость.",
                 "owner": clean_text(value.get("owner") or "ИТ/ИБ"),
                 "effort": clean_text(value.get("effort") or "Средняя"),
+                "result": clean_text(
+                    value.get("result") or value.get("outcome") or value.get("success_metric")
+                ),
             })
             if len(rows) >= limit:
                 break
@@ -525,6 +625,100 @@ def normalize_ai_audit_narrative(payload):
         "management_decisions": clean_list(payload.get("management_decisions"), limit=6),
         "roadmap": clean_roadmap(payload.get("roadmap"), limit=8),
     }
+
+
+def augment_ai_risks_from_narrative(items, narrative, results):
+    """Recover AI-authored findings that the provider placed outside the risks array."""
+    augmented = [dict(item) for item in items if isinstance(item, dict)]
+    existing_keys = {risk_semantic_key(item) for item in augmented}
+    allowed_keys = {
+        "mfa", "iam", "pam", "nac", "dlp", "siem_soc", "patch",
+        "endpoint_detection", "backup", "web_waf", "mail", "legacy_os",
+        "it_monitoring", "change_management", "network_performance", "appsec", "dr",
+    }
+    profiles = {
+        "mfa": ("ИБ", "Покрытие MFA требует расширения", "Компрометация пароля может открыть доступ к критичным ресурсам."),
+        "iam": ("ИБ", "Жизненный цикл учетных записей не автоматизирован", "Несвоевременное создание, изменение или отзыв прав повышает риск избыточного доступа."),
+        "pam": ("ИБ", "Привилегированные доступы требуют отдельного контроля", "Неконтролируемая административная сессия может затронуть несколько критичных систем."),
+        "nac": ("ИБ", "Допуск устройств к сети не контролируется автоматически", "Неизвестное устройство может получить сетевой доступ до ручного обнаружения."),
+        "dlp": ("ИБ", "Каналы передачи чувствительных данных требуют контроля", "Неконтролируемая передача данных повышает риск утечки и регуляторных последствий."),
+        "siem_soc": ("ИБ", "Мониторинг событий и реагирование требуют развития", "Неполное покрытие источников увеличивает время обнаружения и расследования инцидентов."),
+        "patch": ("ИТ", "Уязвимости и обновления требуют управляемого цикла", "Критичные уязвимости могут оставаться открытыми дольше согласованного срока."),
+        "endpoint_detection": ("ИБ", "Защита конечных точек требует измеримого контроля", "Неполная телеметрия затрудняет обнаружение и расследование сложных атак."),
+        "backup": ("ИТ", "Восстановление из резервных копий требует подтверждения", "Без тестов нельзя подтвердить достижение согласованных RTO и RPO."),
+        "web_waf": ("ИБ", "Публичные приложения требуют прикладной защиты", "Атаки на веб-приложения могут затронуть данные и доступность цифровых сервисов."),
+        "mail": ("ИБ", "Почтовый контур требует усиления защиты", "Фишинг остается вероятным каналом компрометации учетных записей."),
+        "legacy_os": ("ИТ", "Операционные системы без поддержки требуют плана миграции", "Отсутствие обновлений повышает риск эксплуатации известных уязвимостей."),
+        "it_monitoring": ("ИТ", "Мониторинг ИТ-сервисов требует централизации", "Позднее обнаружение деградации увеличивает продолжительность простоя."),
+        "change_management": ("ИТ", "Изменения и конфигурации требуют формального процесса", "Несогласованные изменения повышают риск ошибок и простоев."),
+        "network_performance": ("ИТ", "Сетевая архитектура требует подтверждения измерениями", "Без замеров нельзя обоснованно оценить емкость и отказоустойчивость каналов."),
+        "appsec": ("ИБ", "Проверки безопасности необходимо встроить в релизы", "Уязвимости приложений и зависимостей могут попадать в продуктивную среду."),
+        "dr": ("ИТ", "Аварийное восстановление требует формализованного сценария", "Неопределенные RTO/RPO повышают риск неприемлемого простоя критичных сервисов."),
+    }
+    control_by_key = {
+        "mfa": "MFA", "iam": "IAM", "pam": "PAM", "nac": "NAC", "dlp": "DLP",
+        "siem_soc": "SIEM/SOAR", "patch": "Patch Management", "endpoint_detection": "EDR/XDR/MDR",
+        "backup": "Резервное копирование", "web_waf": "WAF", "mail": "Mail Security",
+    }
+
+    observations = narrative.get("audit_observations", []) if isinstance(narrative, dict) else []
+    roadmap = narrative.get("roadmap", []) if isinstance(narrative, dict) else []
+    candidates = {}
+    for row in roadmap:
+        if not isinstance(row, dict):
+            continue
+        action = str(row.get("action") or row.get("recommendation") or "").strip()
+        if not action:
+            continue
+        key = risk_semantic_key({"risk": action, "recommendation": action})
+        if key not in allowed_keys:
+            continue
+        candidates.setdefault(key, []).append(row)
+
+    for key, rows in candidates.items():
+        if key in existing_keys:
+            continue
+        area, title, impact = profiles[key]
+        actions = []
+        for row in rows[:3]:
+            action = str(row.get("action") or "").strip()
+            rationale = str(row.get("rationale") or "").strip()
+            combined = ". ".join(part.rstrip(". ") for part in (action, rationale) if part)
+            if combined:
+                actions.append(combined + ".")
+        recommendation = " ".join(actions)
+        matching_observation = next(
+            (
+                str(row.get("text") or "").strip()
+                for row in observations
+                if isinstance(row, dict)
+                and risk_semantic_key({"risk": row.get("title", ""), "description": row.get("text", "")}) == key
+                and str(row.get("text") or "").strip()
+            ),
+            "",
+        )
+        control = control_by_key.get(key, title)
+        evidence = [f"{control} в анкете: {results.get(control, 'не подтверждено')}"]
+        success_metric = next(
+            (str(row.get("result") or row.get("success_metric") or "").strip() for row in rows if str(row.get("result") or row.get("success_metric") or "").strip()),
+            "Владелец, срок и измеримый критерий результата утверждены",
+        )
+        augmented.append({
+            "area": area,
+            "_ai_area": area,
+            "level": "HIGH" if key in {"pam", "nac", "dlp", "mfa"} else "MEDIUM",
+            "risk": title,
+            "description": matching_observation or title,
+            "impact": impact,
+            "recommendation": recommendation,
+            "evidence": evidence,
+            "success_metric": success_metric,
+            "vendors": [control],
+            "legal_ids": [],
+            "frameworks": [],
+        })
+        existing_keys.add(key)
+    return augmented
 
 
 def is_truncated_ai_text(value):
@@ -540,6 +734,29 @@ def is_truncated_ai_text(value):
     return text.endswith(unfinished_endings)
 
 
+def canonical_ai_risk_title(semantic_key):
+    titles = {
+        "mfa": "Критичные доступы требуют полного покрытия MFA",
+        "iam": "Жизненный цикл учетных записей не автоматизирован",
+        "pam": "Привилегированные доступы требуют отдельного контроля",
+        "nac": "Допуск устройств к сети не контролируется автоматически",
+        "dlp": "Каналы передачи чувствительных данных требуют контроля",
+        "siem_soc": "Мониторинг событий и реагирование требуют развития",
+        "patch": "Уязвимости и обновления требуют управляемого цикла",
+        "endpoint_detection": "Защита конечных точек требует измеримого контроля",
+        "backup": "Восстановление из резервных копий требует подтверждения",
+        "web_waf": "Публичные приложения требуют прикладной защиты",
+        "mail": "Почтовый контур требует усиления защиты",
+        "legacy_os": "Операционные системы без поддержки требуют плана миграции",
+        "it_monitoring": "Мониторинг ИТ-сервисов требует централизации",
+        "change_management": "Изменения и конфигурации требуют формального процесса",
+        "network_performance": "Сетевая архитектура требует подтверждения измерениями",
+        "appsec": "Проверки безопасности необходимо встроить в релизы",
+        "dr": "Аварийное восстановление требует формализованного сценария",
+    }
+    return titles.get(str(semantic_key or ""), "")
+
+
 def prepare_ai_risks_for_report(items, min_items=1):
     if not isinstance(items, list):
         return []
@@ -549,21 +766,98 @@ def prepare_ai_risks_for_report(items, min_items=1):
     for item in items:
         if not isinstance(item, dict):
             continue
-        if is_truncated_ai_text(item.get("risk")):
-            continue
-        if is_truncated_ai_text(item.get("recommendation")):
+        normalized_item = dict(item)
+        semantic_key = risk_semantic_key(normalized_item)
+        if is_truncated_ai_text(normalized_item.get("risk")):
+            canonical_title = canonical_ai_risk_title(semantic_key)
+            if not canonical_title:
+                continue
+            normalized_item["risk"] = canonical_title
+        if is_truncated_ai_text(normalized_item.get("recommendation")):
             continue
 
-        semantic_key = risk_semantic_key(item)
         if not semantic_key or semantic_key in seen:
             continue
-        prepared.append(item)
+        prepared.append(normalized_item)
         seen.add(semantic_key)
 
     return prepared if len(prepared) >= min_items else []
 
 
-def ai_quality_gate(items, min_items=6):
+def explain_ai_risk_rejections(items):
+    reasons = {"not_object": 0, "short_risk": 0, "short_recommendation": 0, "duplicate": 0}
+    seen = set()
+    for item in items if isinstance(items, list) else []:
+        if not isinstance(item, dict):
+            reasons["not_object"] += 1
+            continue
+        semantic_key = risk_semantic_key(item)
+        if is_truncated_ai_text(item.get("risk")) and not canonical_ai_risk_title(semantic_key):
+            reasons["short_risk"] += 1
+            continue
+        if is_truncated_ai_text(item.get("recommendation")):
+            reasons["short_recommendation"] += 1
+            continue
+        if not semantic_key or semantic_key in seen:
+            reasons["duplicate"] += 1
+            continue
+        seen.add(semantic_key)
+    return ", ".join(f"{key}={value}" for key, value in reasons.items() if value) or "нет"
+
+
+def recover_complete_risk_objects(response_text):
+    """Recover valid top-level risk objects from a partially malformed AI response."""
+    text = str(response_text or "")
+    risks_match = re.search(r'"risks"\s*:\s*\[', text, flags=re.IGNORECASE)
+    if risks_match:
+        array_start = text.find("[", risks_match.start())
+    else:
+        array_start = text.find("[")
+    if array_start < 0:
+        return None
+
+    recovered = []
+    object_start = None
+    object_depth = 0
+    in_string = False
+    escaped = False
+    for position in range(array_start + 1, len(text)):
+        char = text[position]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+            continue
+        if char == "{":
+            if object_depth == 0:
+                object_start = position
+            object_depth += 1
+            continue
+        if char != "}" or object_depth == 0:
+            continue
+        object_depth -= 1
+        if object_depth != 0 or object_start is None:
+            continue
+        candidate = text[object_start:position + 1]
+        try:
+            item = json.loads(candidate)
+        except json.JSONDecodeError:
+            object_start = None
+            continue
+        if isinstance(item, dict):
+            recovered.append(item)
+        object_start = None
+
+    return {"risks": recovered} if recovered else None
+
+
+def ai_quality_gate(items, min_items=6, min_security_items=3, min_it_items=3):
     prepared = prepare_ai_risks_for_report(items, min_items=1)
     if len(prepared) < min_items:
         return [], f"ИИ дал только {len(prepared)} пригодных пунктов из минимально ожидаемых {min_items}."
@@ -583,22 +877,23 @@ def ai_quality_gate(items, min_items=6):
     it_count = 0
     weak_text_count = 0
     for item in prepared:
+        item_area = str(item.get("area", item.get("_ai_area", ""))).strip().upper()
         combined = " ".join(
             str(item.get(field, ""))
             for field in ("risk", "description", "impact", "recommendation")
         ).lower()
-        if any(marker in combined for marker in security_markers):
+        if item_area == "ИБ" or any(marker in combined for marker in security_markers):
             security_count += 1
-        if any(marker in combined for marker in it_markers):
+        if item_area == "ИТ" or any(marker in combined for marker in it_markers):
             it_count += 1
         if len(str(item.get("recommendation", "")).strip()) < 90:
             weak_text_count += 1
 
     if weak_text_count > max(2, len(prepared) // 3):
         return [], "ИИ дал слишком короткие рекомендации; включены экспертные правила."
-    if security_count < 3:
+    if security_count < min_security_items:
         return [], "ИИ почти не покрыл ИБ-домены; включены экспертные правила."
-    if it_count < 3:
+    if it_count < min_it_items:
         return [], "ИИ почти не покрыл ИТ-инфраструктуру; включены экспертные правила."
 
     return prepared, ""
@@ -638,27 +933,75 @@ def security_control_snapshot(results):
     return enabled, missing
 
 
+def control_confirmed_in_results(results, control):
+    if is_enabled(results.get(control)):
+        return True
+    note_values = [
+        str(value)
+        for key, value in results.items()
+        if any(marker in str(key).lower() for marker in ("примеч", "комментар", "дополн"))
+    ]
+    notes = " ".join(note_values).lower()
+    aliases = {
+        "WAF": ("waf", "web application firewall", "fortiweb", "cloudflare waf", "imperva waf", "f5 asm"),
+        "EDR": ("edr", "endpoint detection and response"),
+        "MFA": ("mfa", "многофактор"),
+    }.get(control, (control.lower(),))
+    positive = ("есть", "включ", "использ", "внедр", "настро", "работает", "защищ")
+    for alias in aliases:
+        for match in re.finditer(re.escape(alias), notes):
+            context = notes[max(0, match.start() - 45):match.end() + 45]
+            if any(marker in context for marker in positive) and not any(
+                marker in context for marker in ("нет ", "отсутств", "не внедр", "не настро")
+            ):
+                return True
+    return False
+
+
 def risk_conflicts_with_answers(item, results):
     key = risk_semantic_key(item)
 
+    if key == "legacy_os":
+        legacy_arm = int(results.get("ОС АРМ (Windows XP/Vista/7/8)", 0) or 0)
+        legacy_servers = int(results.get("ОС Сервера (Windows Server 2008/2012 R2)", 0) or 0)
+        if legacy_arm + legacy_servers == 0:
+            return "No legacy operating systems reported"
+
     if key == "mfa" and is_enabled(results.get("MFA")):
         return "MFA already enabled"
+    if key == "iam" and (is_enabled(results.get("IAM")) or is_enabled(results.get("IDM"))):
+        return "IAM already enabled"
     if key == "pam" and is_enabled(results.get("PAM")):
         return "PAM already enabled"
     if key == "siem_soc" and is_enabled(results.get("SIEM")):
         return "SIEM already enabled"
     if key == "patch" and is_enabled(results.get("Patch Management")):
         return "Patch Management already enabled"
-    if key == "web_waf" and is_enabled(results.get("WAF")):
+    if key == "web_waf" and control_confirmed_in_results(results, "WAF"):
         return "WAF already enabled"
     if key == "mail" and is_enabled(results.get("Mail Security")):
         return "Mail Security already enabled"
     if key == "dlp" and is_enabled(results.get("DLP")):
         return "DLP already enabled"
     if key == "backup" and is_enabled(results.get("Резервное копирование")):
-        return "Backup already enabled"
+        combined = " ".join(
+            str(item.get(field, ""))
+            for field in ("risk", "description", "recommendation")
+        ).lower()
+        absence_markers = (
+            "отсутствие резервного копирования",
+            "отсутствует резервное копирование",
+            "резервные копии отсутств",
+            "резервное копирование отсутств",
+            "резервное копирование не внедр",
+            "нет резервного копирования",
+            "backup отсутств",
+            "backup не внедр",
+        )
+        if any(marker in combined for marker in absence_markers):
+            return "Backup already enabled"
     if key == "endpoint_detection" and any(
-        is_enabled(results.get(control))
+        control_confirmed_in_results(results, control)
         for control in ("EDR", "XDR", "MDR")
     ):
         return "Endpoint detection/response already enabled"
@@ -718,48 +1061,332 @@ def widget_int(key):
         return 0
 
 
-def get_regulators_by_industry(industry):
-    regulators = {
-        "Финтех / Банки": """
-- Национальный Банк РК
-- PCI DSS
-- ISO 27001
-- Постановления НБРК по ИБ
-""",
+INDUSTRY_OPTIONS = [
+    "Финтех / Банки",
+    "Страхование",
+    "Ритейл / E-commerce",
+    "Здравоохранение / Медицинская организация",
+    "Госсектор",
+    "Квазигосударственный сектор",
+    "КВОИКИ / Критическая инфраструктура",
+    "Телеком / Связь",
+    "Энергетика / Коммунальная инфраструктура",
+    "Транспорт / Логистика",
+    "Производство / АСУ ТП",
+    "IT / Разработка",
+    "Образование",
+    "Услуги / Корпоративный сектор",
+    "Другое",
+]
 
-        "Госсектор": """
-- ГОСТ РК 34
-- Требования ГТС
-- Требования ИБ государственных ИС
-- ISO 27001
-""",
+COUNTRY_CODE_OPTIONS = [
+    ("🇰🇿 +7", "+7"),
+    ("🇷🇺 +7", "+7"),
+    ("🇺🇿 +998", "+998"),
+    ("🇰🇬 +996", "+996"),
+    ("🇹🇯 +992", "+992"),
+    ("🇦🇪 +971", "+971"),
+    ("🇹🇷 +90", "+90"),
+    ("🇦🇿 +994", "+994"),
+]
 
-        "Ритейл / E-commerce": """
-- PCI DSS
-- Закон РК о персональных данных
-- ISO 27001
-""",
+NETWORK_TYPE_OPTIONS = [
+    "Оптика", "RJ45 (Ethernet)", "Радиорелейная", "Спутник",
+    "4G/5G", "Starlink", "ADSL/VDSL", "Нет",
+]
 
-        "IT / Разработка": """
-- OWASP ASVS
-- Secure SDLC
-- ISO 27001
-- SOC2
-""",
+WIFI_TYPE_OPTIONS = [
+    "Wi-Fi 6/6E (802.11ax)",
+    "Wi-Fi 5 (802.11ac)",
+    "Wi-Fi 4 (802.11n)",
+    "Другое",
+]
 
-        "Производство": """
-- ISA/IEC 62443
-- ISO 27001
-- Требования по защите АСУ ТП
-"""
+MAIL_SYSTEM_OPTIONS = [
+    "Exchange (On-Prem)", "Lotus", "Microsoft 365",
+    "Google Workspace", "Собственный", "Нет",
+]
+
+WEB_HOSTING_OPTIONS = ["Собственный ЦОД", "Облако KZ", "Облако Global"]
+
+DRAFT_SELECTBOX_OPTIONS = {
+    "client_industry_select": [""] + INDUSTRY_OPTIONS,
+    "client_phone_code": COUNTRY_CODE_OPTIONS,
+    "main_net_type": NETWORK_TYPE_OPTIONS,
+    "back_net_type": NETWORK_TYPE_OPTIONS,
+    "wf_type_sel": WIFI_TYPE_OPTIONS,
+    "mail_system": MAIL_SYSTEM_OPTIONS,
+    "web_hosting": WEB_HOSTING_OPTIONS,
+}
+
+
+REGULATORY_CATALOG = {
+    "PD_LAW": {
+        "title": "Закон РК «О персональных данных и их защите» № 94-V",
+        "short": "Закон РК о персональных данных № 94-V",
+        "url": "https://adilet.zan.kz/rus/docs/Z1300000094",
+        "scope": "Сбор, обработка, хранение и защита персональных данных.",
+        "status": "Обязательное требование",
+    },
+    "PD_RULES": {
+        "title": "Правила осуществления мер по защите персональных данных, № 32810",
+        "short": "Правила защиты персональных данных № 32810",
+        "url": "https://adilet.zan.kz/rus/docs/V2300032810",
+        "scope": "Организационные и технические меры собственника, оператора и третьего лица.",
+        "status": "Обязательное требование",
+    },
+    "INFORMATIZATION": {
+        "title": "Закон РК «Об информатизации» № 418-V",
+        "short": "Закон РК «Об информатизации» № 418-V",
+        "url": "https://adilet.zan.kz/rus/docs/Z1500000418",
+        "scope": "Защита объектов информатизации и специальные обязанности владельцев КВОИКИ.",
+        "status": "Обязательное при применимости",
+    },
+    "UNIFIED_832": {
+        "title": "Единые требования в области ИКТ и ИБ, постановление Правительства РК № 832",
+        "short": "Единые требования ИКТ и ИБ № 832",
+        "url": "https://adilet.zan.kz/rus/docs/P1600000832",
+        "scope": "Государственный и квазигосударственный сектор, государственные интеграции и КВОИКИ.",
+        "status": "Обязательное при применимости",
+    },
+    "KVOIKI_529": {
+        "title": "Правила и критерии отнесения к КВОИКИ, постановление Правительства РК № 529",
+        "short": "Критерии КВОИКИ № 529",
+        "url": "https://adilet.zan.kz/rus/docs/P1600000529",
+        "scope": "Определение и подтверждение статуса критически важного объекта ИК-инфраструктуры.",
+        "status": "Обязательное для КВОИКИ",
+    },
+    "KVOIKI_MONITORING": {
+        "title": "Правила мониторинга обеспечения ИБ объектов электронного правительства и КВОИКИ, № 17019",
+        "short": "Правила мониторинга ИБ КВОИКИ № 17019",
+        "url": "https://adilet.zan.kz/rus/docs/V1800017019",
+        "scope": "Мониторинг событий, ответственный по ИБ, реагирование на инциденты и устранение уязвимостей для КВОИКИ.",
+        "status": "Обязательное для КВОИКИ",
+    },
+    "FINANCE_IS": {
+        "title": "Минимальные требования по обеспечению ИБ на финансовом рынке, № 38505",
+        "short": "Требования ИБ финансового рынка № 38505",
+        "url": "https://adilet.zan.kz/rus/docs/V2600038505",
+        "scope": "Финансовые организации и регулируемые участники финансового рынка.",
+        "status": "Отраслевое обязательное требование",
+    },
+    "BANK_IS": {
+        "title": "Требования к ИБ банков и организаций, осуществляющих отдельные банковские операции, № 16772",
+        "short": "Требования ИБ банков № 16772",
+        "url": "https://adilet.zan.kz/rus/docs/V1800016772",
+        "scope": "Банки, филиалы банков-нерезидентов и отдельные банковские операции.",
+        "status": "Отраслевое обязательное требование",
+    },
+    "MEDICAL_DATA": {
+        "title": "Правила сбора, обработки, хранения и защиты персональных медицинских данных, № 22550",
+        "short": "Правила защиты медицинских данных № 22550",
+        "url": "https://adilet.zan.kz/rus/docs/V2100022550",
+        "scope": "Субъекты цифрового здравоохранения и персональные медицинские данные.",
+        "status": "Отраслевое обязательное требование",
+    },
+}
+
+
+def expand_regulatory_references(value):
+    """Replace internal legal IDs in AI prose with customer-facing titles."""
+    text = str(value or "")
+
+    def replace_penalty(match):
+        item = REGULATORY_CATALOG.get(match.group(1))
+        if not item:
+            return match.group(0)
+        return f"Регуляторные последствия при нарушении требований: {item['short']}"
+
+    text = re.sub(r"Штрафы\s+по\s*\[([A-Z0-9_]+)\]", replace_penalty, text, flags=re.IGNORECASE)
+
+    def replace_requirements(match):
+        item = REGULATORY_CATALOG.get(match.group(1))
+        return f"требованиям документа «{item['short']}»" if item else match.group(0)
+
+    text = re.sub(
+        r"требованиям(?:\s+регулятор(?:а|ов))?\s*\[([A-Z0-9_]+)\]",
+        replace_requirements,
+        text,
+        flags=re.IGNORECASE,
+    )
+
+    def replace_token(match):
+        item = REGULATORY_CATALOG.get(match.group(1))
+        return item["short"] if item else match.group(0)
+
+    text = re.sub(r"\[([A-Z0-9_]+)\]", replace_token, text)
+
+    def replace_requirement_group(match):
+        prefix = match.group(1)
+        identifiers = re.findall(r"[A-Z][A-Z0-9_]+", match.group(2))
+        titles = [
+            REGULATORY_CATALOG[identifier.upper()]["short"]
+            for identifier in identifiers
+            if identifier.upper() in REGULATORY_CATALOG
+        ]
+        return f"{prefix}: {'; '.join(titles)}" if titles else match.group(0)
+
+    identifier_pattern = "|".join(
+        re.escape(identifier)
+        for identifier in sorted(REGULATORY_CATALOG, key=len, reverse=True)
+    )
+    if identifier_pattern:
+        text = re.sub(
+            rf"((?:нарушение|несоответствие)\s+требовани(?:й|ям))\s+"
+            rf"((?:{identifier_pattern})(?:\s*(?:,|и)\s*(?:{identifier_pattern}))*)",
+            replace_requirement_group,
+            text,
+            flags=re.IGNORECASE,
+        )
+        for identifier in sorted(REGULATORY_CATALOG, key=len, reverse=True):
+            text = re.sub(
+                rf"(?<![A-Za-z0-9_]){re.escape(identifier)}(?![A-Za-z0-9_])",
+                REGULATORY_CATALOG[identifier]["short"],
+                text,
+                flags=re.IGNORECASE,
+            )
+    return text
+
+
+def sanitize_customer_roadmap_text(value):
+    """Keep roadmap vendor-neutral and enforce pilot-before-procurement wording."""
+    text = expand_regulatory_references(value).strip()
+    lowered = text.lower()
+
+    if "dlp" in lowered and any(marker in lowered for marker in ("закупить", "выбрать поставщика")):
+        if "пилот" in lowered or "закупить" in lowered:
+            return (
+                "Провести ограниченный пилот DLP на согласованных каналах; по результатам "
+                "подтвердить требования, модель внедрения и решение о масштабировании."
+            )
+        return "Определить каналы контроля, политики и измеримые критерии пилота DLP."
+
+    if any(marker in lowered for marker in ("закупить", "закупка")) and any(
+        marker in lowered for marker in ("пилот", "poc", "proof of concept")
+    ):
+        if "iam" in lowered:
+            return (
+                "Сформировать требования и провести PoC IAM на ограниченной группе пользователей; "
+                "по результатам подтвердить архитектуру, интеграции и решение о масштабировании."
+            )
+        return (
+            "Сформировать требования и провести ограниченный пилот решения; по измеримым результатам "
+            "принять решение о закупке и масштабировании."
+        )
+
+    if "pam" in lowered or "привилегирован" in lowered:
+        if any(marker in lowered for marker in ("рабочую группу", "собрать требования", "выбрать пилот")):
+            return (
+                "Сформировать рабочую группу, инвентаризировать привилегированные доступы ко всем "
+                "критичным системам и выбрать пилотный сценарий PAM."
+            )
+        if "пилот" in lowered:
+            return (
+                "Провести пилот PAM на согласованном критичном контуре; проверить vault, контроль "
+                "сессий, аварийный доступ и передачу событий в SIEM."
+            )
+        if any(marker in lowered for marker in ("полноцен", "масштаб", "все сервер", "внедрить pam")):
+            return (
+                "Расширить PAM на критичные системы, сетевое оборудование, базы данных и "
+                "административные консоли; передавать события в SIEM."
+            )
+
+    if "скан" in lowered and "уязв" in lowered:
+        return (
+            "Провести первичное сканирование уязвимостей согласованного ИТ-контура; "
+            "зафиксировать критичные находки, владельцев и сроки устранения."
+        )
+
+    text = re.sub(
+        r"\s*\((?:e\.?g\.?|например)[^)]*\)",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(r"\s*\([^)]*(?:Cisco|CyberArk|Veeam|Fortinet|Check Point|Huawei|IBM|Splunk|ManageEngine|Broadcom|Forcepoint|OpenVAS|R-?Vision)[^)]*\)", "", text, flags=re.IGNORECASE)
+    vendor_names = {
+        "Cisco ISE", "CyberArk", "Veeam Backup", "Veeam", "Fortinet", "Check Point",
+        "Huawei", "IBM", "Splunk", "ManageEngine", "Broadcom", "Forcepoint",
+        "OpenVAS", "R-Vision", "R Vision", "Qualys", "Tenable", "Rapid7",
+        "Zabbix", "Prometheus", "Microsoft", "Windows Server",
+    }
+    try:
+        vendor_names.update(load_detailed_vendor_names())
+    except Exception:
+        pass
+    for vendor in sorted(vendor_names, key=len, reverse=True):
+        text = re.sub(re.escape(vendor), "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bBackup\b", "резервных копий", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s+с\s+помощью\s+(?:бесплатного\s+)?инструмента\b", "", text, flags=re.IGNORECASE)
+    text = re.sub(
+        r"восстановлени([ея])\s+из\s+(?=(?:и|с|для|по)\b)",
+        r"восстановлени\1 из резервных копий ",
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(r"\(\s*\)", "", text)
+    text = re.sub(r"\s{2,}", " ", text)
+    text = re.sub(r"\s+([,.;:])", r"\1", text)
+    return text.strip(" .,-") + ("." if text.strip(" .,-") else "")
+
+
+INDUSTRY_REGULATORY_IDS = {
+    "Финтех / Банки": ["PD_LAW", "PD_RULES", "FINANCE_IS", "BANK_IS"],
+    "Страхование": ["PD_LAW", "PD_RULES", "FINANCE_IS"],
+    "Ритейл / E-commerce": ["PD_LAW", "PD_RULES"],
+    "Здравоохранение / Медицинская организация": ["PD_LAW", "PD_RULES", "MEDICAL_DATA"],
+    "Госсектор": ["PD_LAW", "PD_RULES", "INFORMATIZATION", "UNIFIED_832"],
+    "Квазигосударственный сектор": ["PD_LAW", "PD_RULES", "INFORMATIZATION", "UNIFIED_832"],
+    "КВОИКИ / Критическая инфраструктура": ["PD_LAW", "PD_RULES", "INFORMATIZATION", "UNIFIED_832", "KVOIKI_529", "KVOIKI_MONITORING"],
+    "Телеком / Связь": ["PD_LAW", "PD_RULES", "INFORMATIZATION"],
+    "Энергетика / Коммунальная инфраструктура": ["PD_LAW", "PD_RULES", "INFORMATIZATION", "KVOIKI_529"],
+    "Транспорт / Логистика": ["PD_LAW", "PD_RULES", "INFORMATIZATION", "KVOIKI_529"],
+    "Производство / АСУ ТП": ["PD_LAW", "PD_RULES", "INFORMATIZATION", "KVOIKI_529"],
+}
+
+
+INDUSTRY_FRAMEWORKS = {
+    "Финтех / Банки": ["ISO/IEC 27001", "PCI DSS (при обработке карточных данных)", "GDPR (при обработке данных субъектов ЕЭЗ)"],
+    "Страхование": ["ISO/IEC 27001", "NIST CSF", "GDPR (при обработке данных субъектов ЕЭЗ)"],
+    "Ритейл / E-commerce": ["OWASP ASVS", "PCI DSS (при обработке карточных данных)", "GDPR (при обработке данных субъектов ЕЭЗ)", "ISO/IEC 27001"],
+    "Здравоохранение / Медицинская организация": ["ISO/IEC 27001", "ISO 27799", "GDPR (при обработке данных субъектов ЕЭЗ)"],
+    "Госсектор": ["СТ РК ISO/IEC 27002", "ISO/IEC 27001"],
+    "Квазигосударственный сектор": ["СТ РК ISO/IEC 27002", "ISO/IEC 27001"],
+    "КВОИКИ / Критическая инфраструктура": ["ISO/IEC 27001", "NIST CSF", "CIS Controls"],
+    "Телеком / Связь": ["ISO/IEC 27001", "NIST CSF"],
+    "Энергетика / Коммунальная инфраструктура": ["IEC 62443", "ISO/IEC 27001"],
+    "Транспорт / Логистика": ["ISO/IEC 27001", "ISO 22301"],
+    "Производство / АСУ ТП": ["IEC 62443", "ISO/IEC 27001"],
+    "IT / Разработка": ["OWASP ASVS", "Secure SDLC", "ISO/IEC 27001"],
+    "Образование": ["ISO/IEC 27001", "CIS Controls"],
+    "Услуги / Корпоративный сектор": ["ISO/IEC 27001", "CIS Controls"],
+}
+
+
+def industry_regulatory_profile(industry):
+    legal_ids = INDUSTRY_REGULATORY_IDS.get(industry, ["PD_LAW", "PD_RULES"])
+    frameworks = list(INDUSTRY_FRAMEWORKS.get(industry, ["ISO/IEC 27001", "CIS Controls"]))
+    return {
+        "industry": industry or "Другое",
+        "legal_ids": legal_ids,
+        "laws": [REGULATORY_CATALOG[item] for item in legal_ids if item in REGULATORY_CATALOG],
+        "frameworks": frameworks,
     }
 
-    return regulators.get(
-        industry,
-        """
-- ISO 27001
-- Закон РК о персональных данных
-"""
+
+def get_regulators_by_industry(industry):
+    profile = industry_regulatory_profile(industry)
+    legal_lines = [
+        f"- [{item_id}] {REGULATORY_CATALOG[item_id]['title']}: {REGULATORY_CATALOG[item_id]['scope']}"
+        for item_id in profile["legal_ids"]
+        if item_id in REGULATORY_CATALOG
+    ]
+    framework_lines = [f"- {item}" for item in profile["frameworks"]]
+    return (
+        "ОБЯЗАТЕЛЬНЫЕ И УСЛОВНО ПРИМЕНИМЫЕ НОРМЫ РК:\n"
+        + "\n".join(legal_lines)
+        + "\n\nРЕКОМЕНДАТЕЛЬНЫЕ И ОТРАСЛЕВЫЕ СТАНДАРТЫ:\n"
+        + "\n".join(framework_lines)
     )
 
 def generate_rule_based_risks(results, context):
@@ -1172,12 +1799,16 @@ def ai_generate_risks_and_recs(c_info, results):
     import streamlit as st
 
     api_key = get_app_secret("GEMINI_API_KEY")
+    groq_api_key = get_app_secret("GROQ_API_KEY")
+    st.session_state.ai_analysis_succeeded = False
 
-    if not api_key:
+    if not api_key and not groq_api_key:
         return []
 
     try:
         model_name = get_app_secret("GEMINI_MODEL", "gemini-2.5-flash")
+        groq_model = get_app_secret("GROQ_MODEL", "openai/gpt-oss-120b")
+        groq_timeout = int(get_app_secret("GROQ_TIMEOUT_SECONDS", 55))
         ai_timeout = int(get_app_secret("GEMINI_TIMEOUT_SECONDS", 45))
         fallback_models = str(get_app_secret(
             "GEMINI_FALLBACK_MODELS",
@@ -1362,6 +1993,34 @@ LOW
 Если контроль есть, можно рекомендовать только улучшение покрытия, регламент,
 контроль исключений или проверку эффективности, но нельзя писать, что контроль отсутствует.
 
+26. Для каждого риска укажи 1-3 конкретных факта анкеты в evidence и один измеримый
+критерий результата в success_metric.
+
+27. legal_ids выбирай только из ID, перечисленных в регуляторном контексте. Не придумывай
+законы, номера, статьи и обязательность. Если прямой нормы нет, верни пустой legal_ids.
+
+28. ISO, NIST, CIS, ITIL, OWASP, IEC и PCI DSS указывай только в frameworks. Это стандарты
+и методологии, а не регуляторы и не законы Республики Казахстан.
+
+29. Закон устанавливает требуемую меру контроля, а не обязанность купить конкретный продукт.
+Не формулируй коммерческое предложение как прямое требование закона.
+
+30. Windows 10 не считай устаревшей ОС автоматически. Linux без номера версии означает
+"версия и срок поддержки требуют подтверждения", а не legacy OS. Риск legacy OS допустим
+только при явном количестве Windows XP/Vista/7/8/8.1 или Windows Server 2008/2012 R2.
+
+31. Если резервное копирование уже указано, не пиши об его отсутствии. Допустимо рекомендовать
+проверку RTO/RPO, immutable/offline-копий, резервирование конфигураций и тест восстановления,
+но только как проверку зрелости существующего контура.
+
+32. Для КВОИКИ и организаций с персональными или регулируемыми данными отсутствие DLP оценивай
+как HIGH. Отсутствие NAC не доказывает отсутствие сегментации: формулируй отдельную меру по
+идентификации, профилированию и допуску устройств к проводной и беспроводной сети.
+
+33. При серверном или критичном контуре без PAM обязательно оцени контроль привилегированных
+учетных записей. SOAR показывай только как следующий этап после стабилизации SIEM/SOC,
+источников событий, сценариев корреляции и SLA реагирования.
+
 УЖЕ ВНЕДРЕНО:
 {enabled_controls_text}
 
@@ -1395,13 +2054,21 @@ LOW
     "description": "Описание риска",
     "impact": "Последствия для бизнеса",
     "recommendation": "Что необходимо сделать",
+    "evidence": [
+      "Факт из анкеты 1",
+      "Факт из анкеты 2"
+    ],
+    "success_metric": "Как проверить, что мера внедрена и работает",
     "vendors": [
       "Vendor1",
       "Vendor2",
       "Vendor3"
     ],
-    "regulators": [
-      "ISO 27001"
+    "legal_ids": [
+      "Только ID из регуляторного контекста, например PD_LAW"
+    ],
+    "frameworks": [
+      "ISO/IEC 27001"
     ]
   }}
 ]
@@ -1422,7 +2089,7 @@ JSON должен быть валидным: все строковые знач�
 Строгий формат ответа:
 {{
   "executive_summary": [
-    "5-7 содержательных выводов для руководства без коммерческого тона"
+    "3 содержательных вывода для руководства без коммерческого тона"
   ],
   "audit_observations": [
     {{"title": "Короткий домен", "text": "Наблюдение аудитора, связанное с фактами анкеты"}}
@@ -1434,8 +2101,11 @@ JSON должен быть валидным: все строковые знач�
       "description": "1-2 предложения с фактами анкеты",
       "impact": "Бизнес-последствие",
       "recommendation": "3 конкретных шага: быстрый шаг, проектный шаг, контроль результата",
+      "evidence": ["Факт анкеты 1", "Факт анкеты 2"],
+      "success_metric": "Измеримый критерий результата",
       "vendors": ["категория или решение"],
-      "regulators": ["ITIL"]
+      "legal_ids": [],
+      "frameworks": ["ITIL"]
     }}
   ],
   "security_recommendations": [
@@ -1445,21 +2115,26 @@ JSON должен быть валидным: все строковые знач�
       "description": "1-2 предложения с фактами анкеты",
       "impact": "Бизнес-последствие",
       "recommendation": "3 конкретных шага: быстрый шаг, проектный шаг, контроль результата",
+      "evidence": ["Факт анкеты 1", "Факт анкеты 2"],
+      "success_metric": "Измеримый критерий результата",
       "vendors": ["категория или решение"],
-      "regulators": ["ISO 27001"]
+      "legal_ids": ["Только ID из регуляторного контекста"],
+      "frameworks": ["ISO/IEC 27001"]
     }}
   ],
   "management_decisions": [
     "4-6 решений, которые руководитель может утвердить сразу"
   ],
   "roadmap": [
-    {{"phase": "0-30 дней", "priority": "P1", "domain": "ИТ/ИБ", "action": "Что сделать", "rationale": "Почему это важно", "owner": "ИТ/ИБ", "effort": "Низкая|Средняя|Высокая"}}
+    {{"phase": "0-30 дней", "priority": "P1", "domain": "ИТ/ИБ", "action": "Не более 120 символов", "rationale": "Почему это важно", "owner": "ИТ/ИБ", "effort": "Низкая|Средняя|Высокая", "result": "Измеримый эффект этапа, не более 100 символов"}}
   ]
 }}
 
 Правила:
 - учитывай масштаб инфраструктуры;
-- верни 5-6 it_recommendations и 5-7 security_recommendations;
+- верни только подтвержденные рекомендации, обычно 2-4 по ИТ и 2-4 по ИБ; не создавай пункты ради количества;
+- roadmap должен содержать ровно 6 объектов: по 2 для фаз 0-30, 31-60 и 61-90 дней;
+- management_decisions должен содержать ровно 4 конкретных решения;
 - ИТ-рекомендации должны быть про сеть, каналы, серверы, виртуализацию, СХД, backup/DR, мониторинг, patch/change/capacity management, бизнес-системы и разработку;
 - минимум 4 ИТ-рекомендации должны быть самостоятельными и не сводиться к ИБ-продуктам;
 - ИБ-рекомендации должны учитывать уже внедренные контроли и не повторять отсутствующий контроль, если он есть;
@@ -1482,6 +2157,18 @@ JSON должен быть валидным: все строковые знач�
 - не используй Microsoft как ИБ-вендора; Microsoft допустим только для ОС/миграции Windows/Windows Server.
 - строго не пиши "отсутствует", "не внедрено" или "не указано" про контроль из списка "Уже внедрено";
 - если MFA есть в списке "Уже внедрено", не создавай риск по отсутствию MFA.
+- legal_ids выбирай только из идентификаторов в блоке "Регуляторный контекст"; не придумывай законы, номера документов и статьи;
+- ISO, NIST, CIS, ITIL, OWASP и PCI DSS указывай только в frameworks, а не в legal_ids;
+- наличие правовой обязанности не означает обязанность купить конкретный продукт: связывай норму с требуемой мерой контроля, а производителя показывай только как вариант реализации;
+- evidence должен содержать конкретные факты анкеты, а success_metric — проверяемый результат без рекламных формулировок.
+- Windows 10 не является legacy OS по умолчанию; Linux без версии требует уточнения, а не вывода об устаревании.
+- если backup указан, не создавай риск его отсутствия; оценивай только RTO/RPO, immutable/offline-копии и тест восстановления.
+- для КВОИКИ с персональными данными отсутствие DLP имеет уровень HIGH.
+- при наличии серверов и критичных систем без PAM обязательно оцени PAM; SOAR указывай как этап развития SIEM/SOC, а не отдельный срочный проект.
+- отсутствие NAC описывай как отсутствие автоматизированного контроля допуска устройств, а не как доказательство отсутствия сегментации.
+- в roadmap не указывай производителей и названия продуктов; используй только классы технологий и управленческие действия.
+- result каждого объекта roadmap должен описывать измеримый результат именно его action, а не всей фазы целиком.
+- для новых решений соблюдай порядок: требования и критерии -> ограниченный пилот -> решение о закупке и масштабировании.
 
 Отрасль: {c_info.get("Сфера деятельности", "-")}
 
@@ -1676,6 +2363,14 @@ LEVEL только CRITICAL, HIGH, MEDIUM или LOW.
         gemini_retry_count = int(get_app_secret("GEMINI_RETRY_COUNT", 1))
         gemini_retry_delay = float(get_app_secret("GEMINI_RETRY_DELAY_SECONDS", 2.0))
 
+        def is_gemini_quota_exhausted(error_text):
+            lowered = str(error_text or "").lower()
+            return (
+                "resource_exhausted" in lowered
+                or "quota exceeded" in lowered
+                or "http 429" in lowered
+            )
+
         def should_retry_gemini_error(error_text):
             lowered = str(error_text or "").lower()
             return any(
@@ -1773,6 +2468,9 @@ LEVEL только CRITICAL, HIGH, MEDIUM или LOW.
                     return json.loads(variant)
                 except json.JSONDecodeError as exc:
                     last_error = exc
+            recovered_payload = recover_complete_risk_objects(response_text)
+            if recovered_payload:
+                return recovered_payload
             raise last_error
 
         def parse_line_response(response_text):
@@ -1798,58 +2496,284 @@ LEVEL только CRITICAL, HIGH, MEDIUM или LOW.
                 })
             return rows
 
+        def accept_ai_payload(parsed_payload, provider_label, model_label, errors):
+            ai_narrative = normalize_ai_audit_narrative(parsed_payload)
+            narrative_requirements = {
+                "executive_summary": 2,
+                "audit_observations": 2,
+                "management_decisions": 4,
+                "roadmap": 6,
+            }
+            missing_narrative = [
+                f"{field}<{minimum}"
+                for field, minimum in narrative_requirements.items()
+                if len(ai_narrative.get(field, [])) < minimum
+            ]
+            roadmap_phase_counts = {
+                phase: sum(phase in str(item.get("phase", "")) for item in ai_narrative.get("roadmap", []))
+                for phase in ("0-30", "31-60", "61-90")
+            }
+            if any(count < 2 for count in roadmap_phase_counts.values()):
+                missing_narrative.append("roadmap phases<2")
+            if missing_narrative:
+                errors.append(
+                    f"{provider_label}: неполный материал для презентации ({', '.join(missing_narrative)})"
+                )
+                return None
+            raw_candidate_count = count_ai_risk_candidates(parsed_payload)
+            normalized_payload = normalize_ai_risks_payload(parsed_payload)
+            normalized_payload = augment_ai_risks_from_narrative(
+                normalized_payload,
+                ai_narrative,
+                results,
+            )
+            normalized_candidate_count = len(normalized_payload)
+            recommendation_fields = ("risks", "it_recommendations", "security_recommendations")
+            present_recommendation_fields = [
+                field
+                for field in recommendation_fields
+                if isinstance(parsed_payload, dict) and isinstance(parsed_payload.get(field), list)
+            ]
+            explicit_no_findings = bool(present_recommendation_fields) and not normalized_payload and all(
+                not parsed_payload.get(field) for field in present_recommendation_fields
+            )
+            if explicit_no_findings:
+                st.session_state.ai_last_error = ""
+                st.session_state.ai_model_used = model_label
+                st.session_state.ai_provider_used = provider_label
+                st.session_state.ai_audit_narrative = ai_narrative
+                st.session_state.ai_analysis_succeeded = True
+                return []
+            normalized_payload, skipped_ai_items = filter_ai_risks_by_answers(
+                normalized_payload,
+                results,
+            )
+            fact_checked_count = len(normalized_payload)
+            if skipped_ai_items:
+                errors.append(
+                    f"{provider_label}: отброшены противоречивые пункты: "
+                    + "; ".join(skipped_ai_items[:5])
+                )
+
+            if provider_label == "Groq":
+                prepared_payload, quality_error = ai_quality_gate(
+                    normalized_payload,
+                    min_items=1,
+                    min_security_items=0,
+                    min_it_items=0,
+                )
+            else:
+                prepared_payload, quality_error = ai_quality_gate(normalized_payload)
+            if not prepared_payload:
+                rejection_details = explain_ai_risk_rejections(normalized_payload)
+                errors.append(
+                    f"{provider_label}: "
+                    f"{quality_error or 'нет пригодных законченных рекомендаций'} "
+                    f"Диагностика приема: raw={raw_candidate_count}, "
+                    f"normalized={normalized_candidate_count}, fact_checked={fact_checked_count}; "
+                    f"rejected={rejection_details}."
+                )
+                return None
+
+            st.session_state.ai_last_error = ""
+            st.session_state.ai_model_used = model_label
+            st.session_state.ai_provider_used = provider_label
+            st.session_state.ai_audit_narrative = ai_narrative
+            st.session_state.ai_analysis_succeeded = True
+            return prepared_payload
+
+        def call_groq_once():
+            groq_prompt = f"""
+Ты senior-аудитор ИТ и ИБ. Проанализируй только факты обезличенной анкеты.
+Верни от 4 до 6 законченных подтвержденных рекомендаций по ИТ и ИБ, если в блоке
+«Не указано» есть не менее четырех применимых разрывов. Каждый технический домен,
+который используется в roadmap, обязательно представь отдельным объектом в risks.
+Не добавляй искусственные пункты ради количества. Если ответ не помещается, сократи число
+пунктов, но обязательно заверши JSON и каждую выданную рекомендацию.
+
+Верни только валидный JSON-объект со следующими корневыми полями:
+- executive_summary: 3 коротких содержательных вывода для руководителя;
+- audit_observations: 3 объекта с полями title и text;
+- management_decisions: 4 конкретных управленческих решения;
+- roadmap: 6 объектов, по 2 на фазы "0-30 дней", "31-60 дней", "61-90 дней".
+  Поля: phase, priority, domain, action, rationale, owner, effort, result.
+  action не длиннее 120 символов, result не длиннее 100 символов и объясняет
+  измеримый эффект именно этой фазы;
+- risks: массив подтвержденных рекомендаций.
+
+Каждый элемент risks должен содержать поля:
+area (только "ИТ" или "ИБ"), level (CRITICAL/HIGH/MEDIUM/LOW), risk,
+description, impact, recommendation, evidence (массив строк), success_metric,
+vendors (массив строк), legal_ids (массив строк), frameworks (массив строк).
+Дополнительные поля допустимы, но не заменяют перечисленные обязательные поля.
+
+Для каждой рекомендации:
+- свяжи риск минимум с одним конкретным фактом анкеты;
+- укажи бизнес-последствие;
+- дай три шага через точку с запятой: быстрый шаг, проектный шаг, контроль результата;
+- добавь измеримый success_metric;
+- не объявляй контроль отсутствующим, если он есть в блоке "Уже внедрено";
+- перед выдачей ответа удали любой пункт, который предлагает внедрить уже включенный контроль;
+- не превращай каждый отсутствующий продукт в отдельный риск;
+- не путай MFA с PAM, управление уязвимостями с SIEM, DLP с сегментацией;
+- OSPF/BGP не доказывают наличие или отсутствие сегментации;
+- legacy OS закрывай миграцией, обновлением и компенсирующими мерами;
+- Windows 10 не считай legacy OS автоматически; Linux без версии означает необходимость уточнения версии и поддержки;
+- если backup уже указан, не создавай риск его отсутствия: оценивай RTO/RPO, immutable/offline-копии и тест восстановления;
+- для КВОИКИ с персональными данными отсутствие DLP оценивай как HIGH;
+- отсутствие NAC формулируй как разрыв автоматизированного допуска и профилирования устройств, а не как отсутствие VLAN/ACL;
+- при серверном и критичном контуре без PAM обязательно оцени привилегированные доступы;
+- SOAR показывай только как следующий этап развития SIEM/SOC после стабилизации источников, сценариев и SLA;
+- в roadmap не указывай производителей или продукты; result каждого объекта должен относиться только к его action;
+- для нового решения сначала требования и пилот, затем решение о закупке и масштабировании;
+- не используй Microsoft как ИБ-вендора, кроме миграции Windows/Windows Server;
+- legal_ids выбирай только из переданного регуляторного контекста.
+
+Отрасль: {c_info.get("Сфера деятельности", "-")}
+
+Уже внедрено:
+{enabled_controls_text[:1800]}
+
+Не указано:
+{missing_controls_text[:1200]}
+
+Ключевые данные анкеты:
+{ai_summary[:5200]}
+
+Регуляторный контекст:
+{regulator_context[:1000]}
+""".strip()
+            groq_payload = {
+                "model": groq_model,
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": (
+                            "Ты senior-аудитор ИТ и ИБ. Анализируй только факты "
+                            "обезличенной анкеты, не выдумывай отсутствующие проблемы "
+                            "и возвращай только валидный JSON-объект с массивом risks."
+                        ),
+                    },
+                    {"role": "user", "content": groq_prompt},
+                ],
+                "temperature": 0.05,
+                "max_completion_tokens": 3400,
+                "reasoning_effort": "low",
+            }
+            groq_url = "https://api.groq.com/openai/v1/chat/completions"
+            headers = {"Authorization": f"Bearer {groq_api_key}"}
+
+            if os.name != "nt":
+                import requests
+
+                def groq_post(verify):
+                    return requests.post(
+                        groq_url,
+                        headers=headers,
+                        json=groq_payload,
+                        timeout=groq_timeout,
+                        verify=verify,
+                    )
+
+                try:
+                    response = groq_post(REQUEST_VERIFY)
+                except requests.exceptions.SSLError:
+                    response = groq_post(False)
+                if not response.ok:
+                    try:
+                        detail = response.json().get("error", {}).get("message", response.text)
+                    except Exception:
+                        detail = response.text
+                    raise RuntimeError(f"HTTP {response.status_code}: {str(detail)[:1200]}")
+                response_payload = response.json()
+            else:
+                response_payload = node_fetch_json(
+                    groq_url,
+                    {
+                        "url": groq_url,
+                        "method": "POST",
+                        "headers": headers,
+                        "body": groq_payload,
+                        "timeoutMs": groq_timeout * 1000,
+                    },
+                    timeout_seconds=groq_timeout,
+                )
+
+            response_text = (
+                response_payload.get("choices", [{}])[0]
+                .get("message", {})
+                .get("content", "")
+            )
+            if not str(response_text).strip():
+                raise RuntimeError("Groq вернул пустой ответ")
+            return parse_ai_response_text(str(response_text))
+
         ai_errors = []
         payload_attempts = (
             ("json", fallback_payload),
             ("json", minimal_payload),
             ("line", line_payload),
         )
+        stop_gemini = False
 
-        for response_format, request_payload in payload_attempts:
-            for active_model in model_candidates:
-                try:
-                    response_payload, response_text = call_gemini_with_retries(
-                        request_payload,
-                        active_model
-                    )
-
+        if api_key:
+            for response_format, request_payload in payload_attempts:
+                if stop_gemini:
+                    break
+                for active_model in model_candidates:
                     try:
+                        response_payload, response_text = call_gemini_with_retries(
+                            request_payload,
+                            active_model,
+                        )
                         parsed_payload = (
                             parse_line_response(response_text)
                             if response_format == "line"
                             else parse_ai_response_text(response_text)
                         )
-                    except json.JSONDecodeError as exc:
-                        ai_errors.append(f"{active_model}: JSON parse error: {exc}")
-                        continue
-
-                    ai_narrative = normalize_ai_audit_narrative(parsed_payload)
-                    normalized_payload = normalize_ai_risks_payload(parsed_payload)
-                    normalized_payload, skipped_ai_items = filter_ai_risks_by_answers(
-                        normalized_payload,
-                        results
-                    )
-                    if skipped_ai_items:
-                        ai_errors.append(
-                            f"{active_model}: отброшены противоречивые пункты: "
-                            + "; ".join(skipped_ai_items[:5])
+                        prepared_payload = accept_ai_payload(
+                            parsed_payload,
+                            "Gemini",
+                            active_model,
+                            ai_errors,
                         )
-                    prepared_payload, quality_error = ai_quality_gate(normalized_payload)
-                    if prepared_payload:
-                        st.session_state.ai_last_error = ""
-                        st.session_state.ai_model_used = active_model
-                        st.session_state.ai_audit_narrative = ai_narrative
-                        return prepared_payload
+                        if prepared_payload is not None:
+                            return prepared_payload
+                        stop_gemini = True
+                        break
+                    except Exception as exc:
+                        safe_error = redact_secret(exc, api_key)
+                        ai_errors.append(f"Gemini/{active_model}: {safe_error}")
+                        stop_gemini = True
+                        break
 
-                    ai_errors.append(f"{active_model}: {quality_error or 'нет пригодных законченных рекомендаций'}")
-                except Exception as exc:
-                    ai_errors.append(f"{active_model}: {redact_secret(exc, api_key)}")
+        if groq_api_key:
+            try:
+                parsed_payload = call_groq_once()
+                prepared_payload = accept_ai_payload(
+                    parsed_payload,
+                    "Groq",
+                    groq_model,
+                    ai_errors,
+                )
+                if prepared_payload is not None:
+                    return prepared_payload
+            except Exception as exc:
+                ai_errors.append(
+                    f"Groq/{groq_model}: {redact_secret(exc, groq_api_key)}"
+                )
 
-        raise ValueError("Gemini не дал пригодный ответ. " + " | ".join(ai_errors[-6:]))
+        raise ValueError(
+            "ИИ-провайдеры не дали пригодный ответ. " + " | ".join(ai_errors[-8:])
+        )
 
     except Exception as e:
-        st.session_state.ai_last_error = redact_secret(e, api_key)
+        safe_error = redact_secret(e, api_key)
+        safe_error = redact_secret(safe_error, groq_api_key)
+        st.session_state.ai_last_error = safe_error
+        st.session_state.ai_provider_used = "Нет ответа"
         st.session_state.ai_audit_narrative = {}
+        st.session_state.ai_analysis_succeeded = False
         return []
 
 
@@ -2974,6 +3898,55 @@ def decode_draft_token(token):
     return json.loads(raw.decode("utf-8"))
 
 
+def normalize_draft_selectbox_value(key, value):
+    if key not in DRAFT_SELECTBOX_OPTIONS:
+        return value, None
+
+    aliases = {
+        "client_industry_select": {
+            "Финансы / Банки": "Финтех / Банки",
+            "Банки": "Финтех / Банки",
+            "Медицина": "Здравоохранение / Медицинская организация",
+            "Медицинское учреждение": "Здравоохранение / Медицинская организация",
+            "Критическая инфраструктура": "КВОИКИ / Критическая инфраструктура",
+            "Квазигоссектор": "Квазигосударственный сектор",
+        },
+        "main_net_type": {
+            "Оптоволокно": "Оптика",
+            "Радиоканал": "Радиорелейная",
+        },
+        "back_net_type": {
+            "Оптоволокно": "Оптика",
+            "Радиоканал": "Радиорелейная",
+        },
+        "web_hosting": {
+            "ЦОД KZ": "Собственный ЦОД",
+            "Собственный дата-центр": "Собственный ЦОД",
+        },
+    }
+
+    if key == "client_phone_code" and isinstance(value, list):
+        value = tuple(value)
+
+    value = aliases.get(key, {}).get(value, value)
+    options = DRAFT_SELECTBOX_OPTIONS.get(key)
+    if options is None or value in options:
+        return value, None
+
+    if key == "client_industry_select" and str(value or "").strip():
+        return "Другое", str(value).strip()
+
+    defaults = {
+        "client_phone_code": COUNTRY_CODE_OPTIONS[0],
+        "main_net_type": "Нет",
+        "back_net_type": "Нет",
+        "wf_type_sel": WIFI_TYPE_OPTIONS[0],
+        "mail_system": "Нет",
+        "web_hosting": WEB_HOSTING_OPTIONS[0],
+    }
+    return defaults.get(key, options[0]), None
+
+
 def apply_draft_state(payload):
     state = payload.get("state", payload)
     if not isinstance(state, dict):
@@ -2981,11 +3954,18 @@ def apply_draft_state(payload):
 
     applied = 0
 
+    normalized_state = dict(state)
     for key, value in state.items():
         if is_draft_system_key(key):
             continue
-        if key == "client_phone_code" and isinstance(value, list):
-            value = tuple(value)
+        value, custom_industry = normalize_draft_selectbox_value(key, value)
+        if custom_industry:
+            normalized_state["client_industry_other"] = custom_industry
+        normalized_state[key] = value
+
+    for key, value in normalized_state.items():
+        if is_draft_system_key(key):
+            continue
         if key in SECURITY_CHECKBOX_KEYS:
             value = coerce_draft_bool(value)
         st.session_state[key] = value
@@ -3623,7 +4603,7 @@ col_h1, col_h2 = st.columns(2)
 
 with col_h1:
     client_info['Город'] = st.text_input("Город*", key="client_city", help="Укажите город фактического нахождения головного офиса.")
-    industry_options = ["Финтех / Банки", "Ритейл / E-commerce", "Производство", "IT / Разработка", "Госсектор", "Другое"]
+    industry_options = INDUSTRY_OPTIONS
     selected_ind = st.selectbox(
         "Сфера деятельности компании*",
         [""] + industry_options,
@@ -3669,10 +4649,7 @@ with col_h2:
     
     st.write("Контактный телефон*")
     p_col1, p_col2 = st.columns([1, 2])
-    country_codes = [
-        ("🇰🇿 +7", "+7"), ("🇷🇺 +7", "+7"), ("🇺🇿 +998", "+998"), ("🇰🇬 +996", "+996"),
-        ("🇹🇯 +992", "+992"), ("🇦🇪 +971", "+971"), ("🇹🇷 +90", "+90"), ("🇦🇿 +994", "+994")
-    ]
+    country_codes = COUNTRY_CODE_OPTIONS
     selected_code = p_col1.selectbox("Код", country_codes, format_func=lambda x: x[0], label_visibility="collapsed", key="client_phone_code")
     phone_num = p_col2.text_input("Номер", placeholder="777 777 77 77", label_visibility="collapsed", key="client_phone_number", help="Телефон для оперативной связи.")
     normalized_phone = normalize_phone_number(phone_num)
@@ -3765,7 +4742,7 @@ wifi_ctrl_enabled = False
 net_active = st.toggle("Своя сетевая инфраструктура", key="net_toggle", help="Активируйте, если организация самостоятельно управляет сетевым оборудованием.")
 
 if net_active:
-    net_types = ["Оптика", "RJ45 (Ethernet)", "Радиорелейная", "Спутник", "4G/5G", "Starlink", "ADSL/VDSL", "Нет"]
+    net_types = NETWORK_TYPE_OPTIONS
     routing_types = ["Статическая", "RIP", "OSPF", "EIGRP", "BGP", "IS-IS"]
     
     col_net1, col_net2 = st.columns(2)
@@ -3844,7 +4821,7 @@ if net_active:
             data['Wi-Fi Точки доступа'] = ap_cnt
             if ap_cnt == 0: validation_errors.append("Укажите количество точек доступа Wi-Fi")
         with w_col3:
-            wf_types = ["Wi-Fi 6/6E (802.11ax)", "Wi-Fi 5 (802.11ac)", "Wi-Fi 4 (802.11n)", "Другое"]
+            wf_types = WIFI_TYPE_OPTIONS
             data['Wi-Fi Тип'] = st.selectbox("Тип Wi-Fi", wf_types, key="wf_type_sel", help="Преимущественный стандарт беспроводной связи.")
 
     if st.checkbox("Межсетевой экран (NGFW)", key="ngfw_chk", help="Многофункциональные шлюзы безопасности (FortiGate, UserGate, CheckPoint и т.д.)."):
@@ -4020,14 +4997,14 @@ st.subheader("1.5. Внутренние Информационные систе�
 is_active = st.toggle("ИС организации", key="is_toggle", help="Бизнес-приложения и корпоративные сервисы.")
 if is_active:
     is_types = {
-        "ERP": "erp", "CRM": "crm", "HelpDesk/ServiceDesk": "sd", 
-        "СЭД (Документооборот)": "sed", "HRM (Кадры)": "hrm", 
+        "ERP": "erp", "CRM": "crm", "HelpDesk/ServiceDesk": "sd",
+        "СЭД (Документооборот)": "sed", "HRM (Кадры)": "hrm",
         "BI (Аналитика)": "bi", "WMS (Склад)": "wms", "Учет (Бухгалтерия)": "acc"
     }
-    
-    m_opts = ["Exchange (On-Prem)", "Lotus", "Microsoft 365", "Google Workspace", "Собственный", "Нет"]
+
+    m_opts = MAIL_SYSTEM_OPTIONS
     m_sys = st.selectbox("Почтовая система", m_opts, key="mail_system", help="Где физически и логически располагается ваша электронная почта.")
-    
+
     if m_sys in ["Exchange (On-Prem)", "Lotus"]:
         m_ver = st.text_input(f"Версия {m_sys}*", key="mail_version_input", help="Например: 2016 CU23 или v9.0.1.")
         data['1.5.1. Почтовая система'] = f"{m_sys} (v.{m_ver})"
@@ -4045,7 +5022,7 @@ if is_active:
             data[f"ИС {label}"] = f"{name_is} (v.{ver_is})"
             if not name_is or not ver_is:
                 validation_errors.append(f"Укажите название и версию для {label}")
-    
+
     data['1.5. Примечание'] = st.text_area("Примечание к разделу 1.5", placeholder="Дополнительные ИС...", key="note_1_5")
 
 render_section_feedback(
@@ -4234,7 +5211,7 @@ render_section_marker(
 )
 web_active = st.toggle("Веб-ресурсы", key="web_toggle")
 if web_active:
-    data['3.1. Хостинг'] = st.selectbox("Хостинг", ["Собственный ЦОД", "Облако KZ", "Облако Global"], key="web_hosting")
+    data['3.1. Хостинг'] = st.selectbox("Хостинг", WEB_HOSTING_OPTIONS, key="web_hosting")
     data['3.2. Frontend'] = st.multiselect("Frontend серверы", ["Nginx", "Apache", "IIS", "LiteSpeed", "Cloudflare"], key="web_frontend")
     data['Примечание (Web)'] = st.text_area("Примечания по Web", placeholder="Стек...", key="note_web")
 
@@ -4330,74 +5307,62 @@ def calculate_it_maturity_score(
     sel_langs,
     cicd_active,
 ):
-    maturity_score = 0
+    earned = 0.0
+    available = 20.0
 
+    # Размер парка задает сложность эксплуатации, но сам по себе не является зрелостью.
     if total_arm > 0:
-        maturity_score += 6
-        if selected_os_arm and sum_os_arm == total_arm:
-            maturity_score += 5
-        if total_arm >= 10:
-            maturity_score += 4
-        if total_arm >= 50:
-            maturity_score += 5
-        if total_arm >= 250:
-            maturity_score += 5
+        earned += 4
+    if selected_os_arm and sum_os_arm == total_arm:
+        earned += 10
+    legacy_markers = ("xp", "vista", "windows 7", "windows 8")
+    if selected_os_arm and not any(
+        marker in str(os_name).lower()
+        for os_name in selected_os_arm
+        for marker in legacy_markers
+    ):
+        earned += 6
 
     if net_active:
-        if main_speed > 0:
-            maturity_score += 4
-        if main_speed >= 100:
-            maturity_score += 3
-        if back_speed > 0:
-            maturity_score += 4
-        if selected_routing:
-            maturity_score += 4
-        if ap_cnt > 0:
-            maturity_score += 2
-        if str(ngfw_vendor).strip().lower() not in {"", "нет", "no", "none"}:
-            maturity_score += 5
+        available += 24
+        earned += 4 if main_speed > 0 else 0
+        earned += 6 if back_speed > 0 else 0
+        earned += 5 if selected_routing else 0
+        earned += 3 if ap_cnt > 0 else 0
+        earned += 6 if str(ngfw_vendor).strip().lower() not in {"", "нет", "no", "none"} else 0
 
     if server_active:
-        server_total = phys_count + virt_count
-        if phys_count > 0:
-            maturity_score += 4
-        if virt_count > 0:
-            maturity_score += 5
-        if server_total >= 5:
-            maturity_score += 3
-        if selected_virt_sys and virt_count > 0:
-            maturity_score += 4
-        if str(backup_vendor).strip().lower() not in {"", "нет", "no", "none"}:
-            maturity_score += 4
+        available += 24
+        earned += 5 if (phys_count + virt_count) > 0 else 0
+        earned += 5 if virt_count > 0 and selected_virt_sys else 0
+        earned += 10 if str(backup_vendor).strip().lower() not in {"", "нет", "no", "none"} else 0
+        earned += 4 if phys_count > 0 and virt_count > 0 else 0
 
     if storage_active:
-        storage_disks = cnt_hdd + cnt_ssd
-        if storage_disks > 0:
-            maturity_score += 3
-        if st_media_sel:
-            maturity_score += 3
-        if cnt_ssd > 0:
-            maturity_score += 2
-        if raid_selected:
-            maturity_score += 4
+        available += 14
+        earned += 3 if (cnt_hdd + cnt_ssd) > 0 else 0
+        earned += 3 if st_media_sel else 0
+        earned += 6 if raid_selected else 0
+        earned += 2 if cnt_ssd > 0 else 0
 
     if systems_active:
-        maturity_score += 6
+        available += 6
+        earned += 4
 
     if web_active:
-        maturity_score += 4
+        available += 4
+        earned += 2
 
     if dev_active:
-        if dev_count > 0:
-            maturity_score += 4
-        if dev_count >= 10:
-            maturity_score += 3
-        if sel_langs:
-            maturity_score += 3
-        if cicd_active:
-            maturity_score += 3
+        available += 8
+        earned += 2 if dev_count > 0 else 0
+        earned += 2 if sel_langs else 0
+        earned += 4 if cicd_active else 0
 
-    return min(100, maturity_score)
+    score = round((earned / available) * 100) if available else 0
+    # Анкета не подтверждает ITSM, capacity management и регулярность DR-тестов,
+    # поэтому оптимальность выше 95% по ее данным доказать нельзя.
+    return min(95, max(0, score))
 
 
 def build_context(results, client_info):
@@ -4442,11 +5407,32 @@ def build_context(results, client_info):
     context["is_finance"] = (
         "Финтех" in industry
         or "Банк" in industry
+        or "Страхование" in industry
     )
 
     context["is_gov"] = (
         "Госсектор" in industry
+        or "Квазигосударственный" in industry
     )
+
+    context["is_kvoiki"] = (
+        "КВОИКИ" in industry
+        or "Критическая инфраструктура" in industry
+    )
+
+    context["is_healthcare"] = (
+        "Здравоохранение" in industry
+        or "Медицин" in industry
+    )
+
+    context["is_telecom"] = (
+        "Телеком" in industry
+        or "Связь" in industry
+    )
+
+    context["is_industrial"] = any(marker in industry for marker in (
+        "Производство", "АСУ ТП", "Энергетика", "Коммунальная", "Транспорт"
+    ))
 
     context["is_it_company"] = (
         "IT" in industry
@@ -5121,8 +6107,9 @@ def solution_categories_for_report_item(item):
 
     categories_by_key = {
         "mfa": "MFA / Conditional Access",
+        "iam": "IAM / Identity Governance / управление жизненным циклом учетных записей",
         "legacy_os": "Миграция на поддерживаемую ОС; изоляция legacy-сегмента",
-        "siem_soc": "SOC / MSSP; SIEM; централизованный сбор логов",
+        "siem_soc": "SOC / MSSP; SIEM; SOAR как этап 2",
         "change_management": "ITSM / Change Management / CMDB",
         "patch": "Vulnerability Management; Patch Management",
         "endpoint_detection": "EDR / XDR / MDR",
@@ -5132,6 +6119,7 @@ def solution_categories_for_report_item(item):
         "dlp": "DLP / Data Security",
         "mail": "Mail Security / Anti-Phishing",
         "segmentation": "Сегментация сети; VLAN / ACL; NGFW policies",
+        "nac": "NAC / Network Access Control; профилирование устройств",
         "it_monitoring": "IT-мониторинг; capacity management",
         "virtualization": "Виртуализация; lifecycle management",
         "storage": "СХД health-check; capacity management",
@@ -5179,6 +6167,7 @@ def portfolio_manufacturers_for_report_item(item):
 
     category_map = {
         "mfa": (["MFA", "IAM"], [], ["ManageEngine"]),
+        "iam": (["IAM", "IGA"], ["ManageEngine", "Wallix", "CyberArk"], []),
         "siem_soc": (["SOC", "SIEM"], ["Fortinet", "ManageEngine", "Splunk", "IBM", "Rapid7", "Palo Alto"], []),
         "change_management": (["ITSM"], ["ManageEngine", "Ivanti", "Broadcom (Symantec)"], []),
         "patch": (["VM", "Patch Management"], ["Qualys", "Tenable", "Rapid7", "Ivanti"], []),
@@ -5189,6 +6178,7 @@ def portfolio_manufacturers_for_report_item(item):
         "dlp": (["DLP"], [], []),
         "mail": (["Email", "Mail Security"], ["Check Point", "Fortinet", "Trend Micro", "Forcepoint"], []),
         "segmentation": (["NAC", "NGFW", "Network Equipment"], ["Fortinet", "Cisco", "Huawei", "Check Point"], []),
+        "nac": (["NAC"], ["Fortinet", "Cisco", "Check Point"], []),
         "virtualization": (["Virtualization"], [], []),
         "storage": (["Storage", "Backup"], [], []),
         "dr": (["Backup", "DR"], [], []),
@@ -5204,7 +6194,7 @@ def portfolio_manufacturers_for_report_item(item):
             preferred=preferred,
             exclude=exclude,
             gap_text="Нет подходящего производителя в матрице",
-            limit=4 if key == "segmentation" else 6,
+            limit=4 if key in {"segmentation", "nac"} else 6,
         )
 
     return manufacturers_for_report_item(item)
@@ -6537,6 +7527,10 @@ def risk_source_label(source):
 
 
 def risk_semantic_key(item):
+    title = str(item.get("risk", "")).strip().lower()
+    if "сегментац" in title and not any(marker in title for marker in ("nac", "network access control")):
+        return "segmentation"
+
     text = " ".join(
         str(item.get(field, ""))
         for field in ("risk", "description", "impact", "recommendation")
@@ -6545,7 +7539,11 @@ def risk_semantic_key(item):
     buckets = [
         ("mfa", ("mfa", "многофактор", "2fa", "двухфактор")),
         ("legacy_os", ("legacy", "устаревш", "windows xp", "windows vista", "windows 7", "windows 8", "2008", "2012 r2")),
-        ("siem_soc", ("siem", "soc", "мониторинг событий", "централизованный мониторинг")),
+        ("pam", ("pam", "привилегирован", "администраторск")),
+        ("iam", ("iam", "identity and access management", "централизованному управлению учетными", "централизованное управление учетными", "управление идентификацией", "жизненный цикл учетных записей")),
+        ("nac", ("nac", "контроль подключения устройств", "контроль доступа устройств к сети", "network access control")),
+        ("dlp", ("dlp", "утеч", "эксфильтрац", "data loss")),
+        ("siem_soc", ("siem", "soc", "soar", "мониторинг событий", "централизованный мониторинг")),
         ("network_performance", ("масштабируемость сетевой", "производительность сетевой", "сетевая топология", "конфигурации маршрутизации")),
         ("itam", ("программными активами", "жизненным циклом", "управление активами", "лицензи", "инвентаризац")),
         ("change_management", ("управления изменениями", "управление изменениями", "change management", "изменениями и конфигурациями")),
@@ -6553,9 +7551,7 @@ def risk_semantic_key(item):
         ("endpoint_detection", ("edr", "xdr", "endpoint", "рабочих мест", "lateral movement")),
         ("backup", ("backup", "резерв", "immutable", "ransomware")),
         ("web_waf", ("waf", "web", "веб", "owasp", "публичн")),
-        ("pam", ("pam", "привилегирован", "администраторск")),
         ("segmentation", ("сегментац", "vlan", "lateral")),
-        ("dlp", ("dlp", "утеч", "эксфильтрац", "data loss")),
         ("mail", ("mail", "почт", "фишинг")),
         ("it_monitoring", ("эксплуатационный мониторинг", "доступности", "производительности", "capacity")),
         ("virtualization", ("виртуализац", "гипервизор", "vm", "хост")),
@@ -6569,7 +7565,6 @@ def risk_semantic_key(item):
         if any(marker in text for marker in markers):
             return key
 
-    title = str(item.get("risk", "")).strip().lower()
     return re.sub(r"\s+", " ", title)
 
 
@@ -6617,10 +7612,22 @@ def sanitize_ai_audit_narrative(narrative, results):
         return {}
 
     segmentation_status = network_segmentation_evidence(results)
+    legacy_reported = (
+        int(results.get("ОС АРМ (Windows XP/Vista/7/8)", 0) or 0)
+        + int(results.get("ОС Сервера (Windows Server 2008/2012 R2)", 0) or 0)
+    ) > 0
 
     def clean_text(value):
-        text = neutralize_company_scale_language(value)
+        text = expand_regulatory_references(neutralize_company_scale_language(value))
         lowered = text.lower()
+        if not legacy_reported and any(marker in lowered for marker in (
+            "устаревш", "legacy", "windows 10", "linux-сервер", "linux сервер",
+        )):
+            return (
+                "Для парка рабочих мест и серверов требуется подтвердить версии, сроки поддержки "
+                "и единый цикл устранения уязвимостей; Windows 10 и Linux без номера версии "
+                "не классифицируются как устаревшие автоматически."
+            )
         if (
             segmentation_status == "unknown"
             and "сегментац" in lowered
@@ -6648,7 +7655,148 @@ def sanitize_ai_audit_narrative(narrative, results):
         for item in narrative.get("audit_observations", [])
         if isinstance(item, dict) and str(item.get("text", "")).strip()
     ]
+    cleaned["roadmap"] = [
+        {
+            **item,
+            "action": sanitize_customer_roadmap_text(item.get("action", "")),
+            "rationale": expand_regulatory_references(item.get("rationale", "")),
+            "result": sanitize_customer_roadmap_text(item.get("result", "")),
+        }
+        for item in narrative.get("roadmap", [])
+        if isinstance(item, dict) and str(item.get("action", "")).strip()
+    ]
     return cleaned
+
+
+def enforce_audit_fact_policy(item, results, context):
+    """Apply narrow fact and priority guards without rewriting the AI conclusion."""
+    normalized = dict(item)
+    for field in ("risk", "description", "impact", "recommendation"):
+        if field in normalized:
+            normalized[field] = expand_regulatory_references(normalized[field])
+    evidence = normalized.get("evidence", [])
+    if isinstance(evidence, list):
+        normalized["evidence"] = [expand_regulatory_references(value) for value in evidence]
+    key = risk_semantic_key(normalized)
+
+    if key == "segmentation" and network_segmentation_evidence(results) != "absent" and not is_enabled(results.get("NAC")):
+        normalized.update({
+            "level": "MEDIUM",
+            "risk": "Подключение устройств к сети не контролируется централизованно",
+            "description": (
+                "В анкете NAC не указан. Это не доказывает отсутствие VLAN или ACL, но означает, "
+                "что допуск проводных, беспроводных и неизвестных устройств к сети требует отдельной проверки."
+            ),
+            "impact": (
+                "Неидентифицированное или несоответствующее политике устройство может получить доступ "
+                "к корпоративной сети до ручного обнаружения."
+            ),
+            "recommendation": (
+                "Составить матрицу типов подключений; провести пилот NAC на Wi-Fi и одном проводном сегменте; "
+                "настроить профилирование, проверку соответствия и изоляцию неизвестных устройств."
+            ),
+            "evidence": [
+                f"NAC в анкете: {results.get('NAC', 'Нет')}",
+                f"Точки доступа Wi-Fi: {results.get('Wi-Fi Точки доступа', results.get('Количество точек доступа', 'не указано'))}",
+            ],
+            "success_metric": "100% подключений идентифицируются; неизвестные устройства изолируются",
+            "vendors": ["NAC"],
+        })
+        key = "nac"
+
+    if key == "nac" and not is_enabled(results.get("NAC")):
+        normalized.update({
+            "level": "MEDIUM",
+            "risk": "Допуск устройств к сети не контролируется автоматически",
+            "description": (
+                "В анкете NAC не указан. Это не подтверждает отсутствие VLAN, ACL или межсетевого "
+                "экранирования, но указывает на отсутствие автоматической проверки устройств при подключении."
+            ),
+            "impact": (
+                "Неизвестное или несоответствующее политике устройство может получить сетевой доступ "
+                "до ручного обнаружения и изоляции."
+            ),
+            "recommendation": (
+                "Описать типы проводных и беспроводных подключений; провести пилот NAC на Wi-Fi и одном "
+                "проводном сегменте; проверить профилирование, контроль соответствия и изоляцию устройств."
+            ),
+            "evidence": [
+                f"NAC в анкете: {results.get('NAC', 'Нет')}",
+                f"Точки доступа Wi-Fi: {results.get('Wi-Fi Точки доступа', results.get('Количество точек доступа', 'не указано'))}",
+            ],
+            "success_metric": "Все подключения идентифицируются; неизвестные устройства автоматически изолируются",
+            "vendors": ["NAC"],
+        })
+
+    if key == "iam" and not is_enabled(results.get("IAM")):
+        user_count = int(context.get("users", results.get("_user_count", 0)) or 0)
+        normalized.update({
+            "level": "MEDIUM",
+            "risk": "Жизненный цикл учетных записей не автоматизирован",
+            "description": (
+                f"В анкете IAM не указан для контура из {user_count} рабочих мест. "
+                "Порядок создания, изменения, регулярного пересмотра и отзыва прав требует подтверждения."
+            ),
+            "impact": (
+                "Задержка отзыва доступа и накопление избыточных прав повышают вероятность "
+                "несанкционированного доступа к бизнес-системам."
+            ),
+            "recommendation": (
+                "Описать процессы приема, перевода и увольнения; определить владельцев ролей и согласования; "
+                "провести PoC IAM на выбранных подразделениях и критичных системах."
+            ),
+            "evidence": [
+                f"IAM в анкете: {results.get('IAM', 'Нет')}",
+                f"Рабочие места: {user_count}",
+            ],
+            "success_metric": "Учетные записи имеют владельца; создание, изменение и отзыв прав выполняются по SLA",
+            "vendors": ["IAM"],
+        })
+
+    if key == "dlp" and not is_enabled(results.get("DLP")) and (
+        context.get("is_kvoiki") or context.get("has_personal_data")
+    ):
+        normalized["level"] = "HIGH"
+        normalized["recommendation"] = (
+            "Определить категории данных, каналы контроля и критерии успеха; провести ограниченный "
+            "пилот DLP; по результатам пилота выбрать архитектуру и масштабировать подтвержденные политики."
+        )
+
+    if key == "backup" and context.get("has_backup"):
+        normalized.update({
+            "risk": "Восстановление из резервных копий не подтверждено регулярными тестами",
+            "description": (
+                f"В анкете указан действующий backup-контур: "
+                f"{results.get('Резервное копирование', 'не указано')}. "
+                "При этом целевые RTO/RPO и результаты контрольного восстановления не зафиксированы."
+            ),
+            "impact": (
+                "Без регулярной проверки нельзя подтвердить, что критичные сервисы будут восстановлены "
+                "в согласованные с бизнесом сроки и с допустимой потерей данных."
+            ),
+            "recommendation": (
+                "Согласовать RTO/RPO по критичным сервисам; утвердить сценарии контрольного "
+                "восстановления; регулярно проводить тесты и фиксировать фактическое время и полноту восстановления."
+            ),
+            "evidence": [
+                f"Резервное копирование: {results.get('Резервное копирование', 'указано')}",
+                "RTO/RPO и результаты тестового восстановления в анкете не зафиксированы",
+            ],
+            "success_metric": (
+                "Все критичные сервисы проходят тест восстановления в пределах утвержденных RTO/RPO"
+            ),
+            "vendors": ["Backup"],
+        })
+
+    if key == "siem_soc" and not is_enabled(results.get("SOAR")):
+        recommendation = str(normalized.get("recommendation", "")).strip()
+        if "soar" not in recommendation.lower():
+            normalized["recommendation"] = (
+                recommendation.rstrip(". ")
+                + ". После стабилизации источников, сценариев и SLA перейти к SOAR-автоматизации повторяемых операций реагирования."
+            ).strip()
+
+    return normalized
 
 
 def professionalize_risk_item(item, results, context):
@@ -6847,6 +7995,7 @@ def align_report_vendors(item, results, context):
         "appsec": ["Checkmarx", "HCL AppScan", "Positive Technologies", "Qualys"],
         "storage": ["Veeam"],
         "segmentation": ["Fortinet", "Cisco", "Huawei"],
+        "nac": ["Fortinet", "Cisco", "Check Point"],
     }
 
     if key == "web_waf":
@@ -6880,8 +8029,9 @@ def build_report_risk_set(c_info, results, context):
         c_info,
         results
     )
+    ai_succeeded = bool(st.session_state.get("ai_analysis_succeeded"))
     ai_used = isinstance(ai_risks, list) and any(isinstance(item, dict) for item in ai_risks)
-    st.session_state.ai_used_in_last_report = ai_used
+    st.session_state.ai_used_in_last_report = ai_succeeded
 
     combined_risks = []
     if ai_used:
@@ -6903,6 +8053,7 @@ def build_report_risk_set(c_info, results, context):
                 f"{risk_semantic_key(item)}: {conflict}"
             )
             continue
+        item = enforce_audit_fact_policy(item, results, context)
         item = professionalize_risk_item(item, results, context)
         item = align_report_vendors(item, results, context)
         semantic_key = risk_semantic_key(item)
@@ -6944,6 +8095,10 @@ def build_report_risk_set(c_info, results, context):
             "vendors": item.get("vendors", []),
             "area": item.get("_ai_area", "ИТ/ИБ"),
             "source": risk_source_label(item.get("_source")),
+            "legal_ids": item.get("legal_ids", []),
+            "frameworks": item.get("frameworks", []),
+            "evidence": item.get("evidence", []),
+            "success_metric": item.get("success_metric", ""),
         }
         for item in report_risks
     ]
@@ -7077,6 +8232,86 @@ def presentation_brand_key():
     return "btg" if "btg" in get_app_instance_label().lower() else "khalil"
 
 
+def presentation_regulatory_summary(industry, regulatory_profile):
+    profiles = {
+        "Финтех / Банки": (
+            "Для банков требования ИБ закреплены отдельными отраслевыми нормами",
+            "Выбран банковский профиль. Требования финансового рынка применяются наряду с правилами защиты персональных данных.",
+            "Нужно подтвердить управление доступом, журналирование, реагирование, непрерывность и контроль критичных информационных систем.",
+        ),
+        "Страхование": (
+            "Для страхового сектора действуют требования финансового рынка и защиты данных",
+            "Выбран страховой профиль, поэтому общие требования к персональным данным дополняются отраслевыми требованиями финансового рынка.",
+            "Нужно подтвердить управление доступом, событиями ИБ, инцидентами, резервированием и непрерывностью ключевых сервисов.",
+        ),
+        "Здравоохранение / Медицинская организация": (
+            "Медицинские данные требуют отдельного режима защиты",
+            "Выбран профиль медицинской организации. Помимо общих правил защиты данных применяются требования к персональным медицинским данным.",
+            "Нужно подтвердить разграничение доступа, учет действий, сохранность, резервирование и порядок реагирования на инциденты.",
+        ),
+        "Госсектор": (
+            "Для государственного сектора требования ИКТ и ИБ являются частью обязательного контура",
+            "Выбран профиль государственного сектора. Применимость единых требований определяется статусом систем и государственными интеграциями.",
+            "Нужно подтвердить документацию по ИБ, управление доступом, журналирование, мониторинг, реагирование и восстановление.",
+        ),
+        "Квазигосударственный сектор": (
+            "Для квазигосударственного сектора применимость требований зависит от роли систем и интеграций",
+            "Выбран квазигосударственный профиль. Единые требования применяются с учетом статуса организации, систем и государственных интеграций.",
+            "Нужно подтвердить границы применимости, документацию по ИБ, журналирование, реагирование и восстановление.",
+        ),
+        "КВОИКИ / Критическая инфраструктура": (
+            "Для КВОИКИ мониторинг, реагирование и восстановление входят в обязательный контур",
+            "В анкете выбран профиль КВОИКИ. Включение конкретных объектов в официальный перечень и границы применимости подтверждаются документально.",
+            "Нужно подтвердить ответственного по ИБ, мониторинг событий, план реагирования, устранение уязвимостей, восстановление и взаимодействие с ОЦИБ/НКЦИБ.",
+        ),
+    }
+    title, applicability, expectations = profiles.get(industry, (
+        "Регуляторные требования определяются отраслью, данными и ролью информационных систем",
+        f"Выбран профиль «{industry or 'Другое'}». Базово применяются требования по защите персональных данных; дополнительные нормы требуют подтверждения.",
+        "Нужно подтвердить состав регулируемых данных и систем, владельцев контролей, управление доступом, реагирование и восстановление.",
+    ))
+    legal_ids = regulatory_profile.get("legal_ids", [])
+    anchor_priority = [
+        "KVOIKI_MONITORING", "UNIFIED_832", "BANK_IS", "FINANCE_IS",
+        "MEDICAL_DATA", "INFORMATIZATION", "KVOIKI_529", "PD_RULES", "PD_LAW",
+    ]
+    anchors = [
+        REGULATORY_CATALOG[item_id]["short"]
+        for item_id in anchor_priority
+        if item_id in legal_ids and item_id in REGULATORY_CATALOG
+    ][:4]
+    return {
+        "title": title,
+        "applicability": applicability,
+        "expectations": expectations,
+        "implementation": "Конкретное основание указано рядом с каждой мерой на следующих слайдах. Норма определяет требуемый контроль, а продукт выбирается после архитектурной проработки.",
+        "anchors": "; ".join(anchors),
+    }
+
+
+def presentation_legal_basis(semantic_key, regulatory_profile):
+    legal_ids = set(regulatory_profile.get("legal_ids", [])) if regulatory_profile else set()
+    priority_by_key = {
+        "siem_soc": ["KVOIKI_MONITORING", "UNIFIED_832", "BANK_IS", "FINANCE_IS", "INFORMATIZATION"],
+        "it_monitoring": ["KVOIKI_MONITORING", "UNIFIED_832", "BANK_IS", "INFORMATIZATION"],
+        "patch": ["KVOIKI_MONITORING", "UNIFIED_832", "BANK_IS", "FINANCE_IS"],
+        "backup": ["UNIFIED_832", "BANK_IS", "FINANCE_IS", "MEDICAL_DATA", "INFORMATIZATION"],
+        "mfa": ["UNIFIED_832", "BANK_IS", "FINANCE_IS", "MEDICAL_DATA", "PD_RULES"],
+        "iam": ["UNIFIED_832", "BANK_IS", "FINANCE_IS", "MEDICAL_DATA", "PD_RULES"],
+        "pam": ["UNIFIED_832", "BANK_IS", "FINANCE_IS", "PD_RULES"],
+    }
+    default_priority = [
+        "UNIFIED_832", "KVOIKI_MONITORING", "BANK_IS", "FINANCE_IS",
+        "MEDICAL_DATA", "INFORMATIZATION", "PD_RULES", "PD_LAW", "KVOIKI_529",
+    ]
+    selected = [
+        item_id
+        for item_id in priority_by_key.get(semantic_key, default_priority)
+        if item_id in legal_ids and item_id in REGULATORY_CATALOG
+    ][:2]
+    return "; ".join(REGULATORY_CATALOG[item_id]["short"] for item_id in selected)
+
+
 def presentation_action_text(value, limit=165):
     def complete_sentence(sentence):
         sentence = str(sentence or "").strip(" .;-")
@@ -7117,6 +8352,49 @@ def presentation_action_text(value, limit=165):
     return " ".join(selected) or complete_sentence(presentation_text(text, limit))
 
 
+def presentation_maturity_style(score):
+    """Return a clear red-yellow-green maturity scale for customer-facing slides."""
+    value = max(0, min(100, int(score or 0)))
+    if value < 40:
+        return "#D92D20", "#FFFFFF"
+    if value < 70:
+        return "#F4B400", "#1F2937"
+    return "#13877C", "#FFFFFF"
+
+
+def presentation_evidence_for_key(semantic_key, results, context, item):
+    """Use one questionnaire-grounded reason per recommendation card."""
+    users = int(context.get("users", 0) or 0)
+    servers = int(context.get("servers", 0) or 0)
+    legacy_arm = int(results.get("ОС АРМ (Windows XP/Vista/7/8)", 0) or 0)
+    legacy_servers = int(results.get("ОС Сервера (Windows Server 2008/2012 R2)", 0) or 0)
+    values = {
+        "mfa": f"В анкете MFA: {results.get('MFA', 'Нет')}. Критичные доступы требуют подтвержденного покрытия вторым фактором.",
+        "legacy_os": f"В анкете указаны устаревшие ОС: {legacy_arm} АРМ и {legacy_servers} серверов.",
+        "siem_soc": f"В анкете SIEM: {results.get('SIEM', 'Нет')}. Централизованный контроль событий для критичных источников не подтвержден.",
+        "patch": f"В анкете Patch Management: {results.get('Patch Management', 'Нет')}. Для {users} АРМ и {servers} серверов нужен управляемый цикл обновлений.",
+        "endpoint_detection": (
+            f"В анкете EPP: {results.get('EPP', 'Нет')}; "
+            f"EDR/XDR/MDR: {results.get('EDR', 'Нет')}/{results.get('XDR', 'Нет')}/{results.get('MDR', 'Нет')}."
+        ),
+        "backup": f"В анкете резервное копирование: {results.get('Резервное копирование', 'Нет')}. RTO/RPO и результаты тестового восстановления не зафиксированы.",
+        "web_waf": f"Публичные сервисы: {'есть' if context.get('has_public_web') else 'не указаны'}; WAF: {results.get('WAF', 'Нет')}.",
+        "pam": f"В анкете PAM: {results.get('PAM', 'Нет')}; серверный контур: {servers} серверов.",
+        "mail": f"Почтовая система: {results.get('1.5.1. Почтовая система', 'не указана')}; Mail Security: {results.get('Mail Security', 'Нет')}.",
+        "appsec": f"Разработка: {'есть' if context.get('has_development') else 'не указана'}; SAST/DAST: {results.get('SAST', 'Нет')}/{results.get('DAST', 'Нет')}.",
+        "network_performance": f"Основной канал: {results.get('Интернет канал (осн)', 'не указан')}; резервный: {results.get('Резервный канал', 'Нет')}; маршрутизация: {results.get('Маршрутизация', 'Нет')}.",
+        "segmentation": "В анкете не приведены схема VLAN/VRF, ACL и матрица межсегментных потоков; OSPF сам по себе не подтверждает сегментацию.",
+        "nac": f"В анкете NAC: {results.get('NAC', 'Нет')}. Требуется подтвердить контроль допуска проводных, Wi-Fi и неизвестных устройств.",
+        "itam": "В анкете не подтверждены единый реестр ПО, лицензий, владельцев активов и сроки поддержки.",
+        "change_management": "В анкете не подтверждены единый процесс согласования изменений, тестирования и плана отката.",
+        "it_monitoring": "В анкете не подтверждены единые метрики доступности, производительности и емкости для критичных сервисов.",
+        "virtualization": f"В анкете виртуальных серверов: {results.get('Серверы (вирт)', 0)}; HA/DRS и резервы ресурсов не описаны.",
+        "storage": "В анкете указаны СХД и RAID, но latency/IOPS, утилизация и запас емкости не раскрыты.",
+        "dr": "В анкете не подтверждены согласованные RTO/RPO и результаты регулярного тестового восстановления.",
+    }
+    return presentation_action_text(values.get(semantic_key) or item.get("description") or item.get("impact"), 165)
+
+
 def presentation_recommendation_key(item):
     normalized = {
         "risk": item.get("risk") or item.get("domain") or "",
@@ -7155,6 +8433,11 @@ def presentation_presales_profile(item):
             "impact": "Компрометация пароля может открыть доступ к почте, удаленным подключениям, административным консолям и бизнес-системам.",
             "action": "Проверить фактическое покрытие MFA и закрыть административные, удаленные и критичные доступы без второго фактора.",
         },
+        "iam": {
+            "title": "Жизненный цикл учетных записей требует централизованного управления",
+            "impact": "Несвоевременное создание, изменение или отзыв прав повышает риск избыточного и несанкционированного доступа.",
+            "action": "Определить процессы joiner/mover/leaver, владельцев ролей и интеграции; провести PoC IAM на ограниченной группе и подтвердить критерии масштабирования.",
+        },
         "siem_soc": {
             "title": "События ИБ не собираются в единый контур",
             "impact": "Разрозненные журналы замедляют обнаружение атак и усложняют расследование инцидентов в критичных системах.",
@@ -7190,6 +8473,16 @@ def presentation_presales_profile(item):
             "impact": "Общие или неконтролируемые административные учетные записи повышают риск несанкционированных изменений и компрометации.",
             "action": "Инвентаризировать привилегированные учетные записи, разделить персональные доступы и внедрить контроль критичных сессий.",
         },
+        "nac": {
+            "title": "Допуск устройств к сети не контролируется автоматически",
+            "impact": "Без централизованного профилирования и политики допуска неизвестные или несоответствующие требованиям устройства могут попасть в корпоративную сеть.",
+            "action": "Провести пилот NAC на Wi-Fi и одном проводном сегменте, настроить профилирование, проверку соответствия и изоляцию неизвестных устройств.",
+        },
+        "iam": {
+            "title": "Жизненный цикл учетных записей не автоматизирован",
+            "impact": "Задержка отзыва доступа и накопление избыточных прав повышают вероятность несанкционированного доступа к бизнес-системам.",
+            "action": "Описать прием, перевод и увольнение, определить владельцев ролей и провести PoC IAM на выбранных подразделениях и критичных системах.",
+        },
         "segmentation": {
             "title": "Архитектуру сегментации необходимо подтвердить",
             "impact": "Без схемы VLAN, ACL и межсегментных политик нельзя достоверно оценить возможность бокового перемещения.",
@@ -7209,14 +8502,59 @@ def presentation_presales_profile(item):
     return key, profiles.get(key, {})
 
 
-def presentation_recommendation_entry(item):
+def presentation_success_metric(semantic_key):
+    metrics = {
+        "mfa": "100% критичных и удаленных учетных записей защищены MFA",
+        "iam": "100% учетных записей имеют владельца и управляемый жизненный цикл",
+        "legacy_os": "Нет рабочих мест на ОС без поддержки либо утвержден план миграции",
+        "siem_soc": "Критичные источники подключены, SLA разбора событий утвержден",
+        "patch": "Критичные уязвимости устраняются в согласованный SLA",
+        "endpoint_detection": "Не менее 98% конечных точек передают телеметрию",
+        "backup": "Тест восстановления подтверждает согласованные RTO и RPO",
+        "web_waf": "Все публичные приложения защищены и проходят регулярную проверку",
+        "pam": "Привилегированные учетные записи учтены и контролируются",
+        "nac": "100% подключений идентифицируются; неизвестные устройства изолируются",
+        "segmentation": "Матрица VLAN/ACL подтверждена тестом межсегментного доступа",
+        "mail": "Защитные политики применены ко всем почтовым ящикам",
+        "appsec": "Критичные релизы проходят обязательные проверки безопасности",
+        "network_performance": "Емкость каналов подтверждена замерами и SLA",
+        "itam": "Не менее 95% активов имеют владельца и актуальный статус",
+        "change_management": "Все продуктивные изменения имеют согласование и план отката",
+        "it_monitoring": "Критичные сервисы имеют метрики, пороги и владельцев реакции",
+    }
+    return metrics.get(semantic_key, "Владелец, срок и измеримый критерий результата утверждены")
+
+
+def presentation_severity_style(level):
+    normalized = str(level or "MEDIUM").strip().upper()
+    aliases = {
+        "КРИТИЧЕСКИЙ": "CRITICAL",
+        "ВЫСОКИЙ": "HIGH",
+        "СРЕДНИЙ": "MEDIUM",
+        "НИЗКИЙ": "LOW",
+    }
+    normalized = aliases.get(normalized, normalized)
+    styles = {
+        "CRITICAL": ("#D92D20", "#FFFFFF"),
+        "HIGH": ("#EA580C", "#FFFFFF"),
+        "MEDIUM": ("#F4B400", "#1F2937"),
+        "LOW": ("#16A34A", "#FFFFFF"),
+    }
+    return normalized, *styles.get(normalized, styles["MEDIUM"])
+
+
+def presentation_recommendation_entry(item, regulatory_profile=None, results=None, context=None):
     normalized = dict(item)
-    normalized["risk"] = item.get("risk") or item.get("domain") or "Рекомендация"
-    normalized["recommendation"] = item.get("recommendation") or item.get("action") or item.get("description")
-    semantic_key, profile = presentation_presales_profile(normalized)
+    for field in ("risk", "description", "impact", "recommendation", "action", "success_metric"):
+        if field in normalized:
+            normalized[field] = expand_regulatory_references(normalized[field])
+    normalized["risk"] = normalized.get("risk") or normalized.get("domain") or "Рекомендация"
+    normalized["recommendation"] = normalized.get("recommendation") or normalized.get("action") or normalized.get("description")
+    _, profile = presentation_presales_profile(normalized)
     generic_titles = {"ит", "иб", "ит/иб", "рекомендация"}
     title_by_key = {
         "mfa": "Многофакторная аутентификация",
+        "iam": "Управление жизненным циклом учетных записей",
         "legacy_os": "Обновление устаревших операционных систем",
         "siem_soc": "Мониторинг событий и реагирование",
         "patch": "Управление уязвимостями и обновлениями",
@@ -7224,18 +8562,23 @@ def presentation_recommendation_entry(item):
         "backup": "Резервное копирование и восстановление",
         "web_waf": "Защита публичных веб-сервисов",
         "pam": "Контроль привилегированных доступов",
+        "nac": "Контроль допуска устройств к сети",
         "network_performance": "Управляемость и производительность сети",
         "itam": "Управление программными активами",
         "change_management": "Управление изменениями и конфигурациями",
         "it_monitoring": "Централизованный мониторинг ИТ",
     }
     raw_title = str(normalized["risk"] or "Рекомендация").strip()
-    if profile.get("title"):
+    if profile.get("title") and not ai_authored:
         raw_title = profile["title"]
     elif raw_title.lower() in generic_titles:
         raw_title = title_by_key.get(semantic_key, "Практическая мера улучшения")
     title = presentation_text(raw_title, 78)
-    action = profile.get("action") or presentation_action_text(normalized["recommendation"], 165)
+    action = (
+        presentation_action_text(normalized["recommendation"], 190)
+        if ai_authored
+        else profile.get("action") or presentation_action_text(normalized["recommendation"], 190)
+    )
     solution = presentation_text(solution_categories_for_report_item(normalized), 88)
     vendors = portfolio_manufacturers_for_report_item(normalized)
     if "матрице" in str(vendors).lower() or "нет подходящего" in str(vendors).lower():
@@ -7243,28 +8586,70 @@ def presentation_recommendation_entry(item):
     else:
         vendor_limit = 5 if semantic_key == "web_waf" else 4
         vendors = ", ".join(split_portfolio_list(vendors)[:vendor_limit])
+    if semantic_key in {"patch", "itam"} and "hcl" not in str(vendors).lower():
+        vendors = ", ".join([*split_portfolio_list(vendors), "HCL BigFix"])
     vendors = presentation_text(vendors, 92)
+    evidence_values = normalized.get("evidence", [])
+    if not isinstance(evidence_values, list):
+        evidence_values = [evidence_values] if evidence_values else []
+    evidence = "; ".join(str(value).strip() for value in evidence_values if str(value).strip())
+    if results is not None and context is not None and not (ai_authored and evidence):
+        evidence = presentation_evidence_for_key(semantic_key, results, context, item)
+    elif not evidence:
+        evidence = normalized.get("description") or normalized.get("impact") or "Основание приоритета требует уточнения"
+
+    legal_ids = [
+        value for value in item.get("legal_ids", [])
+        if value in REGULATORY_CATALOG
+    ]
+    if legal_ids:
+        legal = "; ".join(REGULATORY_CATALOG[value]["short"] for value in legal_ids[:2])
+    elif regulatory_profile:
+        legal = presentation_legal_basis(semantic_key, regulatory_profile)
+        if not legal:
+            legal = "Применимость подтверждается с учетом отрасли и роли организации"
+    else:
+        legal = "Применимость подтверждается с учетом отрасли и роли организации"
+
+    raw_level, fill_color, text_color = presentation_severity_style(normalized.get("level"))
     return {
         "key": semantic_key,
+        "level": risk_level_label(raw_level).upper(),
         "title": title,
         "action": action,
         "solution": solution,
         "vendors": vendors,
+        "evidence": presentation_action_text(evidence, 165),
+        "legal": presentation_text(legal, 130),
+        "metric": presentation_text(item.get("success_metric") or presentation_success_metric(semantic_key), 125),
+        "fill_color": fill_color,
+        "text_color": text_color,
     }
 
 
 def presentation_risk_entry(item):
     normalized = dict(item)
-    normalized["recommendation"] = item.get("recommendation") or item.get("action") or item.get("description")
-    _, profile = presentation_presales_profile(normalized)
+    for field in ("risk", "description", "impact", "recommendation", "action"):
+        if field in normalized:
+            normalized[field] = expand_regulatory_references(normalized[field])
+    normalized["recommendation"] = normalized.get("recommendation") or normalized.get("action") or normalized.get("description")
+    semantic_key, profile = presentation_presales_profile(normalized)
+    ai_authored = str(item.get("source") or item.get("_source") or "").strip().lower() in {
+        "ии", "ai", "gemini", "groq"
+    }
+    raw_level, fill_color, text_color = presentation_severity_style(normalized.get("level"))
     return {
-        "level": presentation_text(risk_level_label(item.get("level", "MEDIUM")), 16).upper(),
-        "title": profile.get("title") or presentation_text(item.get("risk", "Риск требует внимания"), 78),
+        "level": presentation_text(risk_level_label(raw_level), 16).upper(),
+        "title": profile.get("title") or presentation_text(
+            normalized.get("risk", "Риск требует внимания"), 58
+        ),
         "impact": profile.get("impact") or presentation_action_text(
-            item.get("impact") or item.get("description") or "Требуется уточнить влияние риска.",
+            normalized.get("impact") or normalized.get("description") or "Требуется уточнить влияние риска.",
             155,
         ),
         "action": profile.get("action") or presentation_action_text(normalized["recommendation"], 135),
+        "fill_color": fill_color,
+        "text_color": text_color,
     }
 
 
@@ -7302,29 +8687,34 @@ def presentation_focus_items(context, business_systems):
 
 
 def build_audit_presentation_replacements(c_info, results, final_score, it_maturity_score):
+    it_score_fill, it_score_text = presentation_maturity_style(it_maturity_score)
+    security_score_fill, security_score_text = presentation_maturity_style(final_score)
     context = build_context(results, c_info)
+    regulatory_profile = industry_regulatory_profile(c_info.get("Сфера деятельности", ""))
+    regulatory_summary = presentation_regulatory_summary(
+        c_info.get("Сфера деятельности", ""),
+        regulatory_profile,
+    )
     domain_scores = calculate_domain_scores(results)
-    rule_risks = generate_rule_based_risks(results, context)
-    risk_sources = st.session_state.get("last_report_risk_sources") or rule_risks
+    ai_risk_sources = [
+        item
+        for item in st.session_state.get("last_report_risk_sources", [])
+        if str(item.get("source", "")).strip().lower() == "ии"
+    ]
+    # The customer deck is authored by AI. Deterministic rules validate facts and
+    # remain available to internal reports, but do not inject customer-facing risks.
+    risk_sources = ai_risk_sources
     ai_narrative = sanitize_ai_audit_narrative(
         st.session_state.get("ai_audit_narrative", {}),
         results,
     )
-    roadmap_items = ai_narrative.get("roadmap") or build_contextual_roadmap(
-        results,
-        context,
-        domain_scores,
-        rule_risks,
-    )
-    conclusions = build_expert_conclusion(
-        results,
-        context,
-        final_score,
-        domain_scores,
-        roadmap_items,
-    )
+    roadmap_items = ai_narrative.get("roadmap", [])
     summary_items = []
-    for item in [*ai_narrative.get("executive_summary", []), *conclusions]:
+    narrative_summary = [
+        *ai_narrative.get("executive_summary", []),
+        *[item.get("text", "") for item in ai_narrative.get("audit_observations", [])],
+    ]
+    for item in narrative_summary:
         clean_item = presentation_action_text(item, 220)
         if clean_item not in summary_items:
             summary_items.append(clean_item)
@@ -7346,7 +8736,14 @@ def build_audit_presentation_replacements(c_info, results, final_score, it_matur
     focus_items = presentation_focus_items(context, business_systems)
 
     normalized_risks = []
-    for item in risk_sources:
+    for source_item in risk_sources:
+        if not isinstance(source_item, dict):
+            continue
+        if risk_conflicts_with_answers(source_item, results):
+            continue
+        item = enforce_audit_fact_policy(source_item, results, context)
+        item = professionalize_risk_item(item, results, context)
+        item = align_report_vendors(item, results, context)
         if not isinstance(item, dict):
             continue
         normalized_risks.append({
@@ -7356,14 +8753,36 @@ def build_audit_presentation_replacements(c_info, results, final_score, it_matur
             "recommendation": item.get("recommendation") or item.get("action") or "Требуется план улучшений",
             "vendors": item.get("vendors", []),
             "area": item.get("area") or item.get("_ai_area") or "ИТ/ИБ",
+            "legal_ids": item.get("legal_ids", []),
+            "frameworks": item.get("frameworks", []),
+            "evidence": item.get("evidence", []),
+            "success_metric": item.get("success_metric", ""),
+            "source": item.get("source", ""),
         })
-    normalized_risks = normalized_risks[:12]
+    severity_order = {"CRITICAL": 0, "КРИТИЧЕСКИЙ": 0, "HIGH": 1, "ВЫСОКИЙ": 1, "MEDIUM": 2, "СРЕДНИЙ": 2, "LOW": 3, "НИЗКИЙ": 3}
+    normalized_risks.sort(key=lambda item: severity_order.get(str(item.get("level", "MEDIUM")).upper(), 2))
+
+    deduplicated_risks = []
+    risk_keys = set()
+    for item in normalized_risks:
+        semantic_key, _ = presentation_presales_profile(item)
+        dedupe_key = semantic_key or re.sub(r"\s+", " ", str(item.get("risk", "")).strip().lower())
+        if dedupe_key in risk_keys:
+            continue
+        risk_keys.add(dedupe_key)
+        deduplicated_risks.append(item)
+    normalized_risks = deduplicated_risks[:12]
 
     recommendation_items = []
     recommendation_keys = set()
 
     def add_recommendation(item):
-        entry = presentation_recommendation_entry(item)
+        entry = presentation_recommendation_entry(
+            item,
+            regulatory_profile,
+            results=results,
+            context=context,
+        )
         key = entry["key"] or re.sub(r"\s+", " ", entry["title"].lower())
         if key in recommendation_keys:
             return
@@ -7371,23 +8790,6 @@ def build_audit_presentation_replacements(c_info, results, final_score, it_matur
         recommendation_keys.add(key)
 
     for item in normalized_risks:
-        add_recommendation(item)
-    for item in roadmap_items:
-        add_recommendation(item)
-
-    recommendation_fallback = [
-        {"risk": "Мониторинг инфраструктуры", "recommendation": "Определить пороги, владельцев и регулярный обзор доступности и емкости.", "vendors": ["IT Monitoring"]},
-        {"risk": "Управление изменениями", "recommendation": "Фиксировать изменения, окна обслуживания, результат и порядок отката.", "vendors": ["ITSM/CMDB"]},
-        {"risk": "Резервное копирование", "recommendation": "Согласовать RTO/RPO и регулярно подтверждать восстановление критичных сервисов.", "vendors": ["Backup"]},
-        {"risk": "Управление активами", "recommendation": "Поддерживать единый реестр оборудования, систем, владельцев и жизненного цикла.", "vendors": ["ITSM/ITAM"]},
-        {"risk": "Контроль доступа", "recommendation": "Проверить критичные учетные записи, MFA, исключения и привилегии.", "vendors": ["MFA"]},
-        {"risk": "Защита конечных точек", "recommendation": "Контролировать покрытие агентов, телеметрию и сценарии реагирования.", "vendors": ["EDR/XDR"]},
-        {"risk": "Управление уязвимостями", "recommendation": "Ввести регулярное сканирование, SLA устранения и контроль исключений.", "vendors": ["VM"]},
-        {"risk": "Мониторинг событий", "recommendation": "Определить минимальный набор источников и регламент разбора инцидентов.", "vendors": ["SIEM/SOC"]},
-    ]
-    for item in recommendation_fallback:
-        if len(recommendation_items) >= 8:
-            break
         add_recommendation(item)
 
     roadmap_by_phase = {
@@ -7400,12 +8802,20 @@ def build_audit_presentation_replacements(c_info, results, final_score, it_matur
         phase_key = next((key for key in roadmap_by_phase if key in phase), None)
         if not phase_key:
             continue
-        action = presentation_action_text(item.get("action") or item.get("recommendation"), 170)
-        if action not in roadmap_by_phase[phase_key]:
-            roadmap_by_phase[phase_key].append(action)
+        action = presentation_action_text(
+            sanitize_customer_roadmap_text(item.get("action") or item.get("recommendation")),
+            120,
+        )
+        result = presentation_action_text(
+            sanitize_customer_roadmap_text(item.get("result") or "Результат подтверждается измеримым критерием."),
+            90,
+        )
+        if action not in [entry["action"] for entry in roadmap_by_phase[phase_key]]:
+            roadmap_by_phase[phase_key].append({"action": action, "result": result})
 
     roadmap_phase_by_key = {
         "mfa": "0-30",
+        "iam": "31-60",
         "legacy_os": "0-30",
         "change_management": "31-60",
         "network_performance": "31-60",
@@ -7415,29 +8825,28 @@ def build_audit_presentation_replacements(c_info, results, final_score, it_matur
         "siem_soc": "61-90",
         "backup": "61-90",
         "patch": "61-90",
+        "pam": "31-60",
+        "nac": "61-90",
     }
     for entry in recommendation_items:
         phase = roadmap_phase_by_key.get(entry["key"])
         if not phase or len(roadmap_by_phase[phase]) >= 2:
             continue
-        action = presentation_action_text(entry["action"], 150)
-        if action not in roadmap_by_phase[phase]:
-            roadmap_by_phase[phase].append(action)
+        action = presentation_action_text(sanitize_customer_roadmap_text(entry["action"]), 120)
+        if action not in [item["action"] for item in roadmap_by_phase[phase]]:
+            roadmap_by_phase[phase].append({
+                "action": action,
+                "result": presentation_action_text(entry["metric"], 90),
+            })
 
-    roadmap_fallback = {
-        "0-30": ["Назначить владельцев рисков и подтвердить приоритеты", "Запустить быстрые меры по критичным доступам и восстановлению"],
-        "31-60": ["Провести пилоты выбранных мер и зафиксировать критерии успеха", "Формализовать процессы контроля и отчетности"],
-        "61-90": ["Масштабировать подтвержденные решения", "Проверить остаточные риски и обновить план развития"],
-    }
-    for phase, defaults in roadmap_fallback.items():
-        for item in defaults:
-            if len(roadmap_by_phase[phase]) >= 2:
-                break
-            roadmap_by_phase[phase].append(item)
-
-    decisions = build_management_decisions(results, context)
-    while len(decisions) < 4:
-        decisions.append("Согласовать владельца, срок и измеримый критерий результата для следующего этапа.")
+    enabled_controls, _ = security_control_snapshot(results)
+    strengths = [presentation_text(item, 105) for item in enabled_controls[:4]]
+    if context.get("has_backup"):
+        strengths.append("В инфраструктуре используется резервное копирование")
+    if context.get("has_virtualization"):
+        strengths.append("Серверная нагрузка использует виртуализацию")
+    while len(strengths) < 4:
+        strengths.append("Сильная сторона требует подтверждения на рабочей сессии")
 
     replacements = {
         "COMPANY": presentation_text(c_info.get("Наименование компании", "Компания"), 54),
@@ -7445,6 +8854,10 @@ def build_audit_presentation_replacements(c_info, results, final_score, it_matur
         "CITY": presentation_text(c_info.get("Город", ""), 28),
         "SCORE": str(int(final_score)),
         "IT_SCORE": str(int(it_maturity_score)),
+        "IT_SCORE_FILL": it_score_fill,
+        "IT_SCORE_TEXT": it_score_text,
+        "SCORE_FILL": security_score_fill,
+        "SCORE_TEXT": security_score_text,
         "DATE": datetime.now().strftime("%d.%m.%Y"),
         "SUMMARY_TITLE": presentation_text(summary_title, 120),
         "USERS": str(context.get("users", 0)),
@@ -7452,62 +8865,436 @@ def build_audit_presentation_replacements(c_info, results, final_score, it_matur
         "PUBLIC": "Есть" if context.get("has_public_web") else "Нет",
         "BUSINESS": str(business_systems),
         "PROFILE": presentation_text(f"{profile_title}. {profile_text}", 240),
+        "SEC_LEVEL": get_maturity_level(final_score)[0],
+        "IT_LEVEL": get_maturity_level(it_maturity_score)[0],
+        "FRAMEWORKS": presentation_text(", ".join(regulatory_profile.get("frameworks", [])), 220),
+        "FRAMEWORK_NOTE": (
+            "Дополнительные стандарты применяются только после подтверждения соответствующих операций, данных и договорных обязательств."
+        ),
+        "REG_TITLE": presentation_text(regulatory_summary["title"], 150),
+        "REG_APPLICABILITY": presentation_text(regulatory_summary["applicability"], 260),
+        "REG_EXPECTATIONS": presentation_text(regulatory_summary["expectations"], 260),
+        "REG_IMPLEMENTATION": presentation_text(regulatory_summary["implementation"], 260),
+        "REG_ANCHORS": presentation_text(regulatory_summary["anchors"], 220),
     }
+
+    threat_domains = [
+        ("Сеть", domain_scores.get("Сетевая безопасность", 0)),
+        ("Endpoint", domain_scores.get("Защита конечных точек", 0)),
+        ("Доступы", domain_scores.get("Идентификация и доступ", 0)),
+        ("Мониторинг", domain_scores.get("Мониторинг и SOC", 0)),
+        ("Восстановление", domain_scores.get("Резервное копирование", 0)),
+        ("Инфраструктура", domain_scores.get("Инфраструктура", 0)),
+    ]
+    coverage_values = [max(0, min(100, int(score or 0))) for _, score in threat_domains]
+    replacements["COVERAGE_AVERAGE"] = str(round(sum(coverage_values) / max(1, len(coverage_values))))
+    strongest_label, strongest_score = max(threat_domains, key=lambda item: int(item[1] or 0))
+    weakest_label, weakest_score = min(threat_domains, key=lambda item: int(item[1] or 0))
+    replacements["COVERAGE_INSIGHT"] = presentation_text(
+        f"Сильнейший домен: {strongest_label} — {int(strongest_score or 0)}%. "
+        f"Главный резерв улучшения: {weakest_label} — {int(weakest_score or 0)}%.",
+        150,
+    )
+    for index, (label, score) in enumerate(threat_domains, start=1):
+        coverage = max(0, min(100, int(score or 0)))
+        if coverage < 40:
+            fill = "#D92D20"
+        elif coverage < 70:
+            fill = "#F4B400"
+        else:
+            fill = "#13877C"
+        replacements[f"THREAT_{index}_LABEL"] = label
+        replacements[f"THREAT_{index}_VALUE"] = str(coverage)
+        replacements[f"THREAT_{index}_FILL"] = fill
     for index, (title, text) in enumerate(focus_items, start=1):
         replacements[f"FOCUS_{index}_TITLE"] = presentation_text(title, 42)
         replacements[f"FOCUS_{index}_TEXT"] = presentation_text(text, 145)
 
-    for index in range(4):
-        replacements[f"SUMMARY_{index + 1}"] = summary_items[index] if index < len(summary_items) else "Уточнить приоритеты и владельцев на рабочей сессии."
-        risk = normalized_risks[index] if index < len(normalized_risks) else {
-            "level": "Средний",
-            "risk": "Требуется дополнительная проверка",
-            "impact": "Для точной оценки необходимо подтвердить фактическую архитектуру и действующие процессы.",
-            "recommendation": "Провести рабочую сессию и подтвердить фактическое состояние контроля.",
-        }
+    for index, strength in enumerate(strengths[:4], start=1):
+        replacements[f"STRENGTH_{index}"] = strength
+
+    laws = list(regulatory_profile.get("laws", []))
+    while len(laws) < 4:
+        laws.append({
+            "title": "Дополнительные отраслевые требования",
+            "short": "Применимость требует подтверждения",
+            "scope": "Уточняется по лицензиям, роли организации и обрабатываемым данным.",
+            "status": "Требует подтверждения",
+        })
+    for index, law in enumerate(laws[:4], start=1):
+        replacements[f"LAW_{index}_TITLE"] = presentation_text(law.get("short") or law.get("title"), 90)
+        replacements[f"LAW_{index}_SCOPE"] = presentation_text(law.get("scope", ""), 150)
+        replacements[f"LAW_{index}_STATUS"] = presentation_text(law.get("status", ""), 48)
+
+    for index in range(6):
+        replacements[f"SUMMARY_{index + 1}"] = summary_items[index] if index < len(summary_items) else "Приоритеты определены по подтвержденным данным анкеты."
+        if index < len(normalized_risks):
+            risk = normalized_risks[index]
+        elif index < len(recommendation_items):
+            entry = recommendation_items[index]
+            risk = {
+                "level": entry["level"],
+                "risk": entry["title"],
+                "impact": entry["evidence"],
+                "recommendation": entry["action"],
+            }
+        else:
+            risk = {
+                "level": "LOW",
+                "risk": "Дополнительный критичный риск не подтвержден",
+                "impact": "По данным анкеты оснований для отдельного вывода не выявлено.",
+                "recommendation": "Сохранять текущий контроль и периодически пересматривать остаточные риски.",
+            }
         risk_entry = presentation_risk_entry(risk)
         replacements[f"RISK_{index + 1}_LEVEL"] = risk_entry["level"]
         replacements[f"RISK_{index + 1}_TITLE"] = risk_entry["title"]
         replacements[f"RISK_{index + 1}_IMPACT"] = risk_entry["impact"]
         replacements[f"RISK_{index + 1}_RECOMMENDATION"] = risk_entry["action"]
-        replacements[f"DECISION_{index + 1}"] = presentation_text(decisions[index], 205)
+        replacements[f"RISK_{index + 1}_FILL"] = risk_entry["fill_color"]
+        replacements[f"RISK_{index + 1}_TEXT"] = risk_entry["text_color"]
+        if index < len(ai_narrative.get("management_decisions", [])):
+            replacements[f"DECISION_{index + 1}"] = presentation_text(
+                ai_narrative["management_decisions"][index],
+                205,
+            )
 
-    for index, entry in enumerate(recommendation_items[:8], start=1):
+    for index in range(4):
+        replacements.setdefault(
+            f"DECISION_{index + 1}",
+            "Поддерживать достигнутый уровень контроля и регулярно пересматривать остаточные риски.",
+        )
+
+    replacements["__RECOMMENDATION_COUNT__"] = len(recommendation_items)
+    replacements["__RISK_COUNT__"] = len(normalized_risks)
+    recommendation_fields = (
+        "LEVEL", "TITLE", "ACTION", "SOLUTION", "VENDORS",
+        "EVIDENCE", "LEGAL", "METRIC",
+    )
+    for index in range(1, max(8, len(recommendation_items)) + 1):
+        for field in recommendation_fields:
+            replacements[f"REC_{index}_{field}"] = ""
+        replacements[f"REC_{index}_FILL"] = "#FFFFFF"
+        replacements[f"REC_{index}_TEXT"] = "#FFFFFF"
+
+    for index, entry in enumerate(recommendation_items, start=1):
+        replacements[f"REC_{index}_LEVEL"] = entry["level"]
         replacements[f"REC_{index}_TITLE"] = entry["title"]
         replacements[f"REC_{index}_ACTION"] = entry["action"]
         replacements[f"REC_{index}_SOLUTION"] = entry["solution"]
         replacements[f"REC_{index}_VENDORS"] = entry["vendors"]
+        replacements[f"REC_{index}_EVIDENCE"] = entry["evidence"]
+        replacements[f"REC_{index}_LEGAL"] = entry["legal"]
+        replacements[f"REC_{index}_METRIC"] = entry["metric"]
+        replacements[f"REC_{index}_FILL"] = entry["fill_color"]
+        replacements[f"REC_{index}_TEXT"] = entry["text_color"]
+
+    for index in range(1, 5):
+        replacements[f"OUTCOME_{index}_TITLE"] = "Поддержание зрелости"
+        replacements[f"OUTCOME_{index}_FROM"] = "Критичный дополнительный разрыв не подтвержден"
+        replacements[f"OUTCOME_{index}_TO"] = "Контроль регулярно пересматривается"
+    for index, entry in enumerate(recommendation_items[:4], start=1):
+        replacements[f"OUTCOME_{index}_TITLE"] = presentation_text(entry["title"], 70)
+        replacements[f"OUTCOME_{index}_FROM"] = presentation_text(entry["evidence"], 145)
+        replacements[f"OUTCOME_{index}_TO"] = presentation_text(entry["metric"], 125)
 
     for phase_index, phase in enumerate(("0-30", "31-60", "61-90"), start=1):
-        replacements[f"ROADMAP_{phase_index}_1"] = roadmap_by_phase[phase][0]
-        replacements[f"ROADMAP_{phase_index}_2"] = roadmap_by_phase[phase][1]
+        while len(roadmap_by_phase[phase]) < 2:
+            roadmap_by_phase[phase].append({
+                "action": "Поддерживать действующий контроль и подтвердить его эффективность.",
+                "result": "Контроль проверен, владелец и периодичность пересмотра утверждены.",
+            })
+        for item_index, item in enumerate(roadmap_by_phase[phase][:2], start=1):
+            replacements[f"ROADMAP_{phase_index}_{item_index}"] = item["action"]
+            replacements[f"ROADMAP_{phase_index}_{item_index}_RESULT"] = item["result"]
     return replacements
 
 
 def render_audit_presentation_template(template_path, replacements):
     import zipfile
+    import xml.etree.ElementTree as ET
     from xml.sax.saxutils import escape
 
+    recommendation_count = max(0, int(replacements.get("__RECOMMENDATION_COUNT__", 8)))
+    risk_count = max(0, int(replacements.get("__RISK_COUNT__", 0)))
+    recommendation_slide_count = (recommendation_count + 1) // 2
+
+    presentation_ns = "http://schemas.openxmlformats.org/presentationml/2006/main"
+    relationships_ns = "http://schemas.openxmlformats.org/package/2006/relationships"
+    office_relationships_ns = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+    drawing_ns = "http://schemas.openxmlformats.org/drawingml/2006/main"
+    content_types_ns = "http://schemas.openxmlformats.org/package/2006/content-types"
+    ET.register_namespace("p", presentation_ns)
+    ET.register_namespace("a", drawing_ns)
+    ET.register_namespace("r", office_relationships_ns)
+
     output = BytesIO()
-    with zipfile.ZipFile(template_path, "r") as source, zipfile.ZipFile(
-        output,
-        "w",
-        compression=zipfile.ZIP_DEFLATED,
-    ) as target:
-        for item in source.infolist():
-            content = source.read(item.filename)
+    with zipfile.ZipFile(template_path, "r") as source:
+        source_items = source.infolist()
+        package_files = {item.filename: source.read(item.filename) for item in source_items}
+
+    presentation_rels = ET.fromstring(package_files["ppt/_rels/presentation.xml.rels"])
+    presentation_root = ET.fromstring(package_files["ppt/presentation.xml"])
+    slide_id_list = presentation_root.find(f"{{{presentation_ns}}}sldIdLst")
+    content_types_root = ET.fromstring(package_files["[Content_Types].xml"])
+
+    relationship_elements = presentation_rels.findall(f"{{{relationships_ns}}}Relationship")
+    relationship_targets = {
+        rel.get("Id"): rel.get("Target", "")
+        for rel in relationship_elements
+    }
+    slide10_rel_id = next(
+        (
+            rel_id for rel_id, target in relationship_targets.items()
+            if target.endswith("slides/slide10.xml")
+        ),
+        None,
+    )
+    slide10_position = None
+    if slide_id_list is not None and slide10_rel_id:
+        for position, slide_id in enumerate(list(slide_id_list)):
+            if slide_id.get(f"{{{office_relationships_ns}}}id") == slide10_rel_id:
+                slide10_position = position
+                break
+
+    recommendation_slide_numbers = [7, 8, 9, 10]
+    extra_slide_paths = []
+    extra_pairs = max(0, recommendation_slide_count - 4)
+    existing_slide_numbers = [
+        int(match.group(1))
+        for path in package_files
+        for match in [re.match(r"ppt/slides/slide(\d+)\.xml$", path)]
+        if match
+    ]
+    next_slide_number = max(existing_slide_numbers, default=13) + 1
+    numeric_rel_ids = [
+        int(match.group(1))
+        for rel in relationship_elements
+        for match in [re.match(r"rId(\d+)$", rel.get("Id", ""))]
+        if match
+    ]
+    next_rel_number = max(numeric_rel_ids, default=0) + 1
+    existing_slide_ids = [
+        int(slide_id.get("id", "0") or 0)
+        for slide_id in list(slide_id_list or [])
+    ]
+    next_slide_id = max(existing_slide_ids, default=255) + 1
+
+    for extra_index in range(extra_pairs):
+        new_slide_number = next_slide_number + extra_index
+        first_recommendation = 9 + extra_index * 2
+        second_recommendation = first_recommendation + 1
+        new_slide_path = f"ppt/slides/slide{new_slide_number}.xml"
+        clone_xml = package_files["ppt/slides/slide10.xml"].decode("utf-8")
+        clone_xml = clone_xml.replace("REC_7_", f"REC_{first_recommendation}_")
+        clone_xml = clone_xml.replace("REC_8_", f"REC_{second_recommendation}_")
+        clone_xml = clone_xml.replace("B10007", f"B1{first_recommendation:04d}")
+        clone_xml = clone_xml.replace("B20007", f"B2{first_recommendation:04d}")
+        clone_xml = clone_xml.replace("B10008", f"B1{second_recommendation:04d}")
+        clone_xml = clone_xml.replace("B20008", f"B2{second_recommendation:04d}")
+        clone_xml = clone_xml.replace(">07<", f">{first_recommendation:02d}<")
+        clone_xml = clone_xml.replace(">08<", f">{second_recommendation:02d}<")
+        package_files[new_slide_path] = clone_xml.encode("utf-8")
+        extra_slide_paths.append(new_slide_path)
+
+        source_rels_path = "ppt/slides/_rels/slide10.xml.rels"
+        if source_rels_path in package_files:
+            new_rels_path = f"ppt/slides/_rels/slide{new_slide_number}.xml.rels"
+            package_files[new_rels_path] = package_files[source_rels_path]
+            extra_slide_paths.append(new_rels_path)
+
+        new_rel_id = f"rId{next_rel_number + extra_index}"
+        ET.SubElement(
+            presentation_rels,
+            f"{{{relationships_ns}}}Relationship",
+            {
+                "Id": new_rel_id,
+                "Type": "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide",
+                "Target": f"slides/slide{new_slide_number}.xml",
+            },
+        )
+        if slide_id_list is not None:
+            new_slide_id = ET.Element(
+                f"{{{presentation_ns}}}sldId",
+                {
+                    "id": str(next_slide_id + extra_index),
+                    f"{{{office_relationships_ns}}}id": new_rel_id,
+                },
+            )
+            insert_at = (slide10_position + 1 + extra_index) if slide10_position is not None else len(slide_id_list)
+            slide_id_list.insert(insert_at, new_slide_id)
+        ET.SubElement(
+            content_types_root,
+            f"{{{content_types_ns}}}Override",
+            {
+                "PartName": f"/ppt/slides/slide{new_slide_number}.xml",
+                "ContentType": "application/vnd.openxmlformats-officedocument.presentationml.slide+xml",
+            },
+        )
+        recommendation_slide_numbers.append(new_slide_number)
+
+    active_recommendation_slides = set(
+        recommendation_slide_numbers[:recommendation_slide_count]
+    )
+    unused_recommendation_slides = set(recommendation_slide_numbers) - active_recommendation_slides
+    partial_recommendation_slide = (
+        recommendation_slide_numbers[recommendation_slide_count - 1]
+        if recommendation_count % 2 and recommendation_slide_count
+        else None
+    )
+
+    relationship_targets = {
+        rel.get("Id"): rel.get("Target", "")
+        for rel in presentation_rels.findall(f"{{{relationships_ns}}}Relationship")
+    }
+    if slide_id_list is not None:
+        for slide_id in list(slide_id_list):
+            rel_id = slide_id.get(f"{{{office_relationships_ns}}}id")
+            target = relationship_targets.get(rel_id, "")
+            match = re.search(r"slides/slide(\d+)\.xml$", target)
+            if match and int(match.group(1)) in unused_recommendation_slides:
+                slide_id_list.remove(slide_id)
+            elif risk_count == 0 and match and int(match.group(1)) == 5:
+                slide_id_list.remove(slide_id)
+    package_files["ppt/presentation.xml"] = ET.tostring(
+        presentation_root,
+        encoding="utf-8",
+        xml_declaration=True,
+    )
+    ET.register_namespace("", relationships_ns)
+    package_files["ppt/_rels/presentation.xml.rels"] = ET.tostring(
+        presentation_rels,
+        encoding="utf-8",
+        xml_declaration=True,
+    )
+    ET.register_namespace("", content_types_ns)
+    package_files["[Content_Types].xml"] = ET.tostring(
+        content_types_root,
+        encoding="utf-8",
+        xml_declaration=True,
+    )
+
+    active_slide_numbers = []
+    if slide_id_list is not None:
+        for slide_id in slide_id_list:
+            rel_id = slide_id.get(f"{{{office_relationships_ns}}}id")
+            target = relationship_targets.get(rel_id, "")
+            match = re.search(r"slides/slide(\d+)\.xml$", target)
+            if match:
+                active_slide_numbers.append(int(match.group(1)))
+
+    for visible_number, slide_number in enumerate(active_slide_numbers, start=1):
+        slide_path = f"ppt/slides/slide{slide_number}.xml"
+        if slide_path not in package_files:
+            continue
+        slide_root = ET.fromstring(package_files[slide_path])
+        shape_tree = slide_root.find(f".//{{{presentation_ns}}}spTree")
+        if shape_tree is not None and slide_number == 5:
+            visible_risks = min(risk_count, 6)
+            risk_rows = (
+                (1350000, 2860000),
+                (2900000, 4420000),
+                (4460000, 6000000),
+            )
+            for shape in list(shape_tree):
+                offset = shape.find(f".//{{{drawing_ns}}}xfrm/{{{drawing_ns}}}off")
+                if offset is None:
+                    continue
+                x_position = int(offset.get("x", "0") or 0)
+                y_position = int(offset.get("y", "0") or 0)
+                row_index = next(
+                    (index for index, (top, bottom) in enumerate(risk_rows) if top <= y_position < bottom),
+                    None,
+                )
+                if row_index is None:
+                    continue
+                card_index = row_index * 2 + (2 if x_position >= 6000000 else 1)
+                if card_index > visible_risks:
+                    shape_tree.remove(shape)
+
+        if shape_tree is not None and slide_number == partial_recommendation_slide:
+            for shape in list(shape_tree):
+                offset = shape.find(f".//{{{drawing_ns}}}xfrm/{{{drawing_ns}}}off")
+                if offset is None:
+                    continue
+                y_position = int(offset.get("y", "0") or 0)
+                if 3700000 <= y_position < 6300000:
+                    shape_tree.remove(shape)
+
+        if shape_tree is not None:
+            for shape in list(shape_tree):
+                offset = shape.find(f".//{{{drawing_ns}}}xfrm/{{{drawing_ns}}}off")
+                if offset is None:
+                    continue
+                x_position = int(offset.get("x", "0") or 0)
+                y_position = int(offset.get("y", "0") or 0)
+                if x_position >= 11000000 and y_position >= 6500000:
+                    text_nodes = shape.findall(f".//{{{drawing_ns}}}t")
+                    if text_nodes:
+                        text_nodes[0].text = str(visible_number)
+
+        package_files[slide_path] = ET.tostring(
+            slide_root,
+            encoding="utf-8",
+            xml_declaration=True,
+        )
+
+    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as target:
+        written_paths = set()
+        for item in source_items:
+            content = package_files[item.filename]
             if item.filename.endswith(".xml"):
                 xml_text = content.decode("utf-8")
                 for key, value in replacements.items():
                     xml_text = xml_text.replace(f"{{{{{key}}}}}", escape(str(value)))
+                for index in range(1, 7):
+                    xml_text = xml_text.replace(f"A1000{index}", replacements.get(f"RISK_{index}_FILL", "#F4B400").lstrip("#"))
+                    xml_text = xml_text.replace(f"A2000{index}", replacements.get(f"RISK_{index}_TEXT", "#1F2937").lstrip("#"))
+                for index in range(1, max(8, recommendation_count) + 1):
+                    xml_text = xml_text.replace(f"B1{index:04d}", replacements.get(f"REC_{index}_FILL", "#F4B400").lstrip("#"))
+                    xml_text = xml_text.replace(f"B2{index:04d}", replacements.get(f"REC_{index}_TEXT", "#1F2937").lstrip("#"))
+                for index in range(1, 7):
+                    xml_text = xml_text.replace(f"B3000{index}", replacements.get(f"THREAT_{index}_FILL", "#F4B400").lstrip("#"))
+                xml_text = xml_text.replace("C10001", replacements.get("IT_SCORE_FILL", "#13877C").lstrip("#"))
+                xml_text = xml_text.replace("C20001", replacements.get("IT_SCORE_TEXT", "#FFFFFF").lstrip("#"))
+                xml_text = xml_text.replace("C10002", replacements.get("SCORE_FILL", "#13877C").lstrip("#"))
+                xml_text = xml_text.replace("C20002", replacements.get("SCORE_TEXT", "#FFFFFF").lstrip("#"))
+                xml_text = xml_text.replace(
+                    "PCI DSS и GDPR применяются только при наличии соответствующих данных и операций.",
+                    escape(str(replacements.get("FRAMEWORK_NOTE", ""))),
+                )
+                xml_text = xml_text.replace("ЧТО ДАСТ ЭТАП", "РЕЗУЛЬТАТ ЭТАПА")
                 content = xml_text.encode("utf-8")
             target.writestr(item, content)
+            written_paths.add(item.filename)
+
+        for path, content in package_files.items():
+            if path in written_paths:
+                continue
+            if path.endswith(".xml"):
+                xml_text = content.decode("utf-8")
+                for key, value in replacements.items():
+                    xml_text = xml_text.replace(f"{{{{{key}}}}}", escape(str(value)))
+                for index in range(1, max(8, recommendation_count) + 1):
+                    xml_text = xml_text.replace(f"B1{index:04d}", replacements.get(f"REC_{index}_FILL", "#F4B400").lstrip("#"))
+                    xml_text = xml_text.replace(f"B2{index:04d}", replacements.get(f"REC_{index}_TEXT", "#1F2937").lstrip("#"))
+                for index in range(1, 7):
+                    xml_text = xml_text.replace(f"B3000{index}", replacements.get(f"THREAT_{index}_FILL", "#F4B400").lstrip("#"))
+                xml_text = xml_text.replace(
+                    "PCI DSS и GDPR применяются только при наличии соответствующих данных и операций.",
+                    escape(str(replacements.get("FRAMEWORK_NOTE", ""))),
+                )
+                xml_text = xml_text.replace("ЧТО ДАСТ ЭТАП", "РЕЗУЛЬТАТ ЭТАПА")
+                content = xml_text.encode("utf-8")
+            target.writestr(path, content)
 
     presentation_bytes = output.getvalue()
     with zipfile.ZipFile(BytesIO(presentation_bytes), "r") as check_zip:
         unresolved = []
+        active_slide_paths = {f"ppt/slides/slide{number}.xml" for number in active_slide_numbers}
         for name in check_zip.namelist():
             if not name.startswith("ppt/slides/slide") or not name.endswith(".xml"):
+                continue
+            if name not in active_slide_paths:
                 continue
             slide_xml = check_zip.read(name).decode("utf-8")
             unresolved.extend(re.findall(r"\{\{[A-Z0-9_]+\}\}", slide_xml))
@@ -8576,6 +10363,9 @@ def build_report_results(
     results["SOAR"] = results.get("Блок 2. SOAR", "Нет")
     results["NAD"] = results.get("Блок 2. NAD", "Нет")
     results["Patch Management"] = results.get("Блок 2. Patch Management", "Нет")
+    for control in ("WAF", "EDR", "MFA"):
+        if not is_enabled(results.get(control)) and control_confirmed_in_results(results, control):
+            results[control] = "Есть (подтверждено в примечании анкеты)"
     results["Виртуализация"] = "Да" if virt_count > 0 else "Нет"
     results["СХД"] = "Да" if any(str(key).startswith("1.4.") for key in results) else "Нет"
     results["Резервный канал"] = f"{back_speed} Mbit/s" if back_speed > 0 else "Нет"
@@ -8860,12 +10650,31 @@ if "telegram_status" not in st.session_state:
     st.session_state.telegram_status = ""
 if "generation_attempt_started_at" not in st.session_state:
     st.session_state.generation_attempt_started_at = None
+if "generation_error_message" not in st.session_state:
+    st.session_state.generation_error_message = ""
 if "report_shortened_last" not in st.session_state:
     st.session_state.report_shortened_last = False
 if "last_report_risk_sources" not in st.session_state:
     st.session_state.last_report_risk_sources = []
 if "telegram_generation_started_sent" not in st.session_state:
     st.session_state.telegram_generation_started_sent = False
+
+
+def render_generation_failure_state():
+    render_generation_guard(False)
+    message = st.session_state.get("generation_error_message") or (
+        "Сервис формирования экспертного заключения временно недоступен. "
+        "Презентация не сформирована. "
+        "Попробуйте повторить позже."
+    )
+    st.error(message)
+    if st.button("Повторить формирование", key="presentation_retry_after_error"):
+        st.session_state.generation_error_message = ""
+        st.session_state.telegram_generation_started_sent = False
+        st.session_state.generation_attempt_started_at = None
+        st.session_state.generation_state = "preparing"
+        st.rerun()
+    st.stop()
 
 render_generation_guard(
     st.session_state.generation_state in {"preparing", "heavy_ai"}
@@ -9031,6 +10840,8 @@ st.markdown("""
 </a>.
 """, unsafe_allow_html=True)
 if st.session_state.generation_state == "idle":
+    if st.session_state.generation_error_message:
+        st.error(st.session_state.generation_error_message)
     if st.button(
         "Сформировать презентацию аудита",
         disabled=len(validation_errors) > 0,
@@ -9038,6 +10849,7 @@ if st.session_state.generation_state == "idle":
         type="primary",
         use_container_width=False,
     ):
+        st.session_state.generation_error_message = ""
         st.session_state.telegram_generation_started_sent = False
         st.session_state.generation_state = "preparing"
         st.rerun()
@@ -9133,22 +10945,27 @@ if st.session_state.generation_state == "preparing":
     # Делаем маленькую паузу в 1.5 секунды, чтобы Streamlit успел железно отправить этот интерфейс в браузер клиента
     time.sleep(1.5)
     
-    # Меняем статус на "Запуск тяжелого ИИ" и перезапускаем страницу. 
+    # Меняем статус на "Запуск тяжелого ИИ" и перезапускаем страницу.
     # Теперь этот красивый экран останется висеть в браузере, пока ИИ думает!
     st.session_state.generation_state = "heavy_ai"
     st.rerun()
 
 # --- СЦЕНАРИЙ 2: ЗАПУСК ТЯЖЕЛОГО ИИ И СБОРКИ EXCEL ---
 if st.session_state.generation_state == "heavy_ai":
+    ai_failure_notified = False
     if st.session_state.generation_attempt_started_at is None:
         st.session_state.generation_attempt_started_at = time.time()
     elif time.time() - st.session_state.generation_attempt_started_at > 300:
-        st.session_state.generation_state = "idle"
+        st.session_state.generation_state = "ai_failed"
         st.session_state.generation_attempt_started_at = None
-        st.error("Формирование отчета было сброшено по таймауту. Запустите формирование еще раз.")
-        st.stop()
+        st.session_state.generation_error_message = (
+            "Формирование презентации превысило допустимое время. Попробуйте повторить позже."
+        )
+        render_generation_failure_state()
 
-    render_generation_live_panel("Идет глубокий анализ и сборка презентации", active_step=4)
+    generation_panel = st.empty()
+    with generation_panel.container():
+        render_generation_live_panel("Идет глубокий анализ и сборка презентации", active_step=4)
 
     if not st.session_state.telegram_generation_started_sent:
         st.session_state.telegram_status = send_internal_telegram_message(
@@ -9158,7 +10975,7 @@ if st.session_state.generation_state == "heavy_ai":
             st.session_state.telegram_generation_started_sent = True
 
     # Этот текст и анимация будут гореть параллельно с фактами сверху
-    with st.spinner("Производится глубокий анализ рисков..."):
+    with st.container():
         try:
             # Подготовка данных перед передачей
             results = build_report_results(
@@ -9177,7 +10994,9 @@ if st.session_state.generation_state == "heavy_ai":
 
             st.session_state.ai_last_error = ""
             st.session_state.ai_model_used = ""
+            st.session_state.ai_provider_used = ""
             st.session_state.ai_used_in_last_report = False
+            st.session_state.ai_analysis_succeeded = False
             st.session_state.ai_audit_narrative = {}
 
             # Внутренний XLSX нужен только как источник листов для sales playbook.
@@ -9188,13 +11007,23 @@ if st.session_state.generation_state == "heavy_ai":
             )
             st.session_state.report_shortened_last = False
             if not ai_report_ready:
+                ai_failure_detail = st.session_state.get(
+                    "ai_last_error",
+                    "AI analysis did not return recommendations",
+                )
                 st.session_state.telegram_status = send_internal_telegram_message(
                     build_telegram_ai_failure_text(
                         client_info,
                         f_score,
-                        st.session_state.get("ai_last_error", "AI analysis did not return recommendations")
+                        ai_failure_detail,
                     )
                 )
+                ai_failure_notified = True
+                st.session_state.cached_report_bytes = None
+                st.session_state.cached_sales_report_bytes = None
+                st.session_state.cached_presentation_bytes = None
+                st.session_state.presentation_status = "error"
+                raise RuntimeError("AI quality gate rejected the customer presentation")
 
             sales_report_bytes, telegram_sales = make_internal_sales_excel(
                 client_info,
@@ -9221,17 +11050,23 @@ if st.session_state.generation_state == "heavy_ai":
                 )
                 raise RuntimeError("Не удалось сформировать клиентскую презентацию") from presentation_exc
         except Exception as exc:
-            st.session_state.telegram_status = send_internal_telegram_message(
-                build_telegram_generation_error_text(
-                    client_info,
-                    preview_score,
-                    redact_secret(exc, TOKEN)
+            if not ai_failure_notified:
+                st.session_state.telegram_status = send_internal_telegram_message(
+                    build_telegram_generation_error_text(
+                        client_info,
+                        preview_score,
+                        redact_secret(exc, TOKEN)
+                    )
                 )
-            )
-            st.session_state.generation_state = "idle"
+            st.session_state.generation_state = "ai_failed"
             st.session_state.generation_attempt_started_at = None
-            st.error("Не удалось сформировать презентацию. Попробуйте повторить позже.")
-            st.stop()
+            st.session_state.generation_error_message = (
+                "Сервис формирования экспертного заключения временно недоступен. "
+                "Презентация не сформирована. "
+                "Попробуйте повторить позже."
+            )
+            generation_panel.empty()
+            render_generation_failure_state()
 
     # Тихо отправляем в ТГ без создания задержек на экране
     st.session_state.telegram_status = ""
@@ -9297,13 +11132,12 @@ if st.session_state.generation_state == "heavy_ai":
     # Переключаем статус в финал
     st.session_state.generation_state = "finalized"
     st.session_state.generation_attempt_started_at = None
+    st.session_state.generation_error_message = ""
     st.rerun()
 
 # --- СЦЕНАРИЙ 3: НЕУДАЧНАЯ СБОРКА БЕЗ КЛИЕНТСКОГО ОТЧЕТА ---
 if st.session_state.generation_state == "ai_failed":
-    st.session_state.generation_state = "idle"
-    st.session_state.generation_attempt_started_at = None
-    st.rerun()
+    render_generation_failure_state()
 
 # --- СЦЕНАРИЙ 4: ВЫВОД ГОТОВОГО РЕЗУЛЬТАТА ---
 if st.session_state.generation_state == "finalized":
@@ -9335,6 +11169,7 @@ if st.session_state.generation_state == "finalized":
         st.session_state.ai_last_error = ""
         st.session_state.report_shortened_last = False
         st.session_state.generation_attempt_started_at = None
+        st.session_state.generation_error_message = ""
         st.session_state.telegram_generation_started_sent = False
         st.rerun()
 

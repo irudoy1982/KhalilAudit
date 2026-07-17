@@ -379,14 +379,15 @@ def test_presentation_template_rendering() -> None:
                 if name.startswith("ppt/slides/slide") and name.endswith(".xml")
             ]
             rendered_xml = "\n".join(archive.read(name).decode("utf-8") for name in slide_names)
-        assert_true(len(slide_names) == 9, f"{brand}: expected 9 slides, got {len(slide_names)}")
-        assert_true("Кто стоит за аудитом" in rendered_xml, f"{brand}: company profile slide is missing")
+        assert_true(len(slide_names) == 13, f"{brand}: expected 13 slides, got {len(slide_names)}")
+        assert_true("Команда для реализации изменений" in rendered_xml, f"{brand}: company profile slide is missing")
         company_name, email, phone, founded_year, foreign_brand = brand_identity[brand]
         assert_true(company_name in rendered_xml, f"{brand}: company name is missing")
         assert_true(email in rendered_xml and phone in rendered_xml, f"{brand}: contact details are missing")
         assert_true(founded_year in rendered_xml, f"{brand}: founding year is missing")
         assert_true(foreign_brand not in rendered_xml, f"{brand}: foreign brand data leaked into presentation")
         assert_true("{{" not in rendered_xml, f"{brand}: unresolved presentation placeholders")
+        assert_true("C10001" not in rendered_xml and "C10002" not in rendered_xml, f"{brand}: maturity colors were not rendered")
         assert_true("Тест &amp; проверка" in rendered_xml, f"{brand}: XML escaping failed")
 
 
@@ -403,7 +404,7 @@ def test_presentation_text_is_self_contained() -> None:
 
 def test_presentation_actions_are_complete_and_deduplicated() -> None:
     module_text = APP.read_text(encoding="utf-8")
-    namespace = {"re": re}
+    namespace = {"re": re, "expand_regulatory_references": lambda value: value}
     for name in (
         "presentation_text",
         "presentation_action_text",
@@ -411,6 +412,7 @@ def test_presentation_actions_are_complete_and_deduplicated() -> None:
         "risk_semantic_key",
         "presentation_recommendation_key",
         "presentation_presales_profile",
+        "presentation_severity_style",
         "presentation_risk_entry",
     ):
         exec(extract_function_source(module_text, name), namespace)
@@ -456,6 +458,54 @@ def test_presentation_actions_are_complete_and_deduplicated() -> None:
         "recommendation": "Провести аудит сети.",
     })
     assert_true("сегментац" not in network_risk["impact"].lower(), "Network performance slide must not invent missing segmentation")
+    nac_risk = namespace["presentation_risk_entry"]({
+        "_source": "Groq",
+        "level": "MEDIUM",
+        "risk": "Отсутствие NAC приводит к неавтоматизированному контролю доступа устройств",
+        "impact": "Увеличение вероятности lateral movement и компрометации критических серверов.",
+        "recommendation": "Внедрить NAC.",
+    })
+    assert_true(
+        nac_risk["title"] == "Допуск устройств к сети не контролируется автоматически"
+        and "lateral movement" not in nac_risk["impact"].lower(),
+        "Known NAC findings must use the fact-safe presales title and impact",
+    )
+    assert_true(len(nac_risk["title"]) <= 58, "Risk-card title can overlap the impact block")
+
+
+def test_it_maturity_measures_controls_not_infrastructure_size() -> None:
+    module_text = APP.read_text(encoding="utf-8")
+    namespace: dict[str, object] = {}
+    exec(extract_function_source(module_text, "calculate_it_maturity_score"), namespace)
+    score = namespace["calculate_it_maturity_score"](
+        420, ["Windows 10", "Windows 11"], 420,
+        True, 1000, 200, ["OSPF"], 14, "FortiGate",
+        True, 4, 38, ["VMware vSphere"], "Veeam",
+        True, ["HDD", "SSD"], 24, 16, ["RAID 10"],
+        True, True, True, 12, ["Python"], True,
+    )
+    assert_true(score <= 95, f"Questionnaire-only IT maturity cannot be 100%, got {score}")
+
+
+def test_presentation_evidence_and_maturity_palette() -> None:
+    module_text = APP.read_text(encoding="utf-8")
+    namespace = {"re": re}
+    for name in ("presentation_text", "presentation_action_text", "presentation_maturity_style", "presentation_evidence_for_key"):
+        exec(extract_function_source(module_text, name), namespace)
+
+    evidence = namespace["presentation_evidence_for_key"](
+        "itam",
+        {"MFA": "Нет"},
+        {"users": 120, "servers": 22},
+        {"description": "Компрометация учетной записи"},
+    )
+    assert_true("компрометац" not in evidence.lower(), f"ITAM evidence is semantically wrong: {evidence}")
+    assert_true("реестр" in evidence.lower(), f"ITAM evidence must state the actual data gap: {evidence}")
+
+    palette = namespace["presentation_maturity_style"]
+    assert_true(palette(20)[0] == "#D92D20", "Low maturity must be red")
+    assert_true(palette(55)[0] == "#F4B400", "Mid maturity must be yellow")
+    assert_true(palette(85)[0] == "#13877C", "High maturity must be green")
 
 
 def main() -> None:
@@ -475,6 +525,8 @@ def main() -> None:
         test_presentation_template_rendering,
         test_presentation_text_is_self_contained,
         test_presentation_actions_are_complete_and_deduplicated,
+        test_it_maturity_measures_controls_not_infrastructure_size,
+        test_presentation_evidence_and_maturity_palette,
     ]
     for test in tests:
         test()

@@ -5,9 +5,9 @@ Keep this file focused only on customer-visible questionnaire and report changes
 
 ## v12
 
-Status: stable production release.
+Status: in development in Test.
 
-Customer-visible improvements:
+Planned customer-visible improvement:
 - Added a concise branded PowerPoint presentation with the audit summary, infrastructure profile, key risks, IT and security recommendations, 90-day roadmap, and management decisions.
 - Added separate IT and information security maturity indicators to the presentation cover.
 - Added solution classes and relevant manufacturers to presentation recommendations.
@@ -19,12 +19,32 @@ Customer-visible improvements:
 - Limited recommended manufacturers to the maintained solution portfolio.
 - Improved the 90-day plan so later phases continue the identified priorities instead of showing generic actions.
 - Simplified customer delivery to one management presentation.
-- Added an early company profile slide explaining the audit team's capabilities and delivery scope.
+- Moved the company profile near the conclusion so the presentation opens with the customer's situation and decisions.
 - Made the company's delivered IT project track record more prominent.
 - Refined company founding facts and improved the audit conclusion download experience.
 - Polished the final audit conclusion action for a clearer, more focused download.
 - Centered the final download action and improved its responsive behavior.
 - Centered and refined the presentation generation action so the primary next step is clear and visually consistent.
+- Added sector-aware Kazakhstan regulatory context and clearer separation between legal obligations and recommended standards.
+- Expanded the sector list with banking, insurance, healthcare, public and quasi-public sectors, critical infrastructure, telecom, utilities, transport, and industrial environments.
+- Rebuilt the presentation as a 13-slide decision narrative with confirmed strengths, a consistent severity palette, regulatory context, evidence-based recommendations, and measurable outcomes.
+- Improved compatibility with previously saved questionnaires when selectable values are renamed or expanded.
+- Separated the executive audit conclusion from measurable 90-day target outcomes to remove repeated presentation content.
+- Replaced the regulatory catalogue slide with a sector-specific explanation of applicability and linked legal grounds to practical measures.
+- Reworked the 90-day roadmap into a timeline with actions and a measurable result for every phase.
+- Redesigned the presentation cover with a modern infrastructure image and a lighter executive layout.
+- Recalibrated IT maturity so the score reflects management and resilience controls rather than the size of the equipment fleet.
+- Added a unified maturity color scale from red through yellow to green on the executive slides.
+- Strengthened presentation quality checks: every shown recommendation is tied to a concrete questionnaire basis and a measurable result.
+- Added clearer conditional industry standards, including PCI DSS and GDPR where their applicability is confirmed.
+- Refined the 90-day roadmap to show the practical result of each stage.
+- Improved presentation fact checks for backup and recovery so an existing backup system is not described as absent or unusable without evidence.
+- Removed internal regulatory identifiers and product names from customer-facing roadmap text.
+- Expanded privileged-access roadmap wording from individual server platforms to the complete critical-system scope.
+- Kept technical audit depth consistent across industries by recovering confirmed recommendations from the complete analysis and roadmap, not only one response section.
+- Expanded concise technology findings into clear customer-facing risk titles without weakening questionnaire fact checks.
+- Improved recommendation consistency so network admission, identity lifecycle, and privileged access are described as separate, evidence-based initiatives.
+- Refined presentation risk cards to prevent long titles from overlapping impact text.
 
 ## v12.0.0
 
