@@ -104,7 +104,7 @@ def get_app_secret(name, default=None):
 
 
 APP_INSTANCE_DEFAULT = "Khalil"
-APP_VERSION = "12.17"
+APP_VERSION = "12.18"
 
 
 def get_app_instance_label():
@@ -4616,7 +4616,7 @@ with col_h1:
         industry = st.text_input("Укажите вашу сферу деятельности*", key="client_industry_other", help="Введите отрасль вручную")
     else:
         industry = selected_ind
-    
+
     client_info['Сфера деятельности'] = industry
     client_info['Наименование компании'] = st.text_input("Наименование компании*", key="client_company_name", help="Официальное или сокращенное название юрлица.")
 
@@ -4646,7 +4646,7 @@ with col_h1:
 with col_h2:
     client_info['ФИО контактного лица'] = st.text_input("ФИО контактного лица*", key="client_contact_name", help="С кем наш эксперт сможет обсудить детали отчета.")
     client_info['Должность'] = st.text_input("Должность*", key="client_contact_role", help="Например: ИТ-Директор, Системный администратор, CEO.")
-    
+
     st.write("Контактный телефон*")
     p_col1, p_col2 = st.columns([1, 2])
     country_codes = COUNTRY_CODE_OPTIONS
@@ -4744,7 +4744,7 @@ net_active = st.toggle("Своя сетевая инфраструктура", k
 if net_active:
     net_types = NETWORK_TYPE_OPTIONS
     routing_types = ["Статическая", "RIP", "OSPF", "EIGRP", "BGP", "IS-IS"]
-    
+
     col_net1, col_net2 = st.columns(2)
     with col_net1:
         st.write("Основной канал")
@@ -4829,7 +4829,7 @@ if net_active:
         data['1.2.7. NGFW'] = f"Да ({ngfw_vendor if ngfw_vendor else 'не указан'})"
         if not ngfw_vendor: validation_errors.append("Укажите производителя NGFW")
         score += 20
-    
+
     data['1.2. Примечание'] = st.text_area("Примечание к разделу 1.2", placeholder="Особенности топологии сети...", key="note_1_2")
 
 render_section_feedback(
@@ -8550,7 +8550,10 @@ def presentation_recommendation_entry(item, regulatory_profile=None, results=Non
             normalized[field] = expand_regulatory_references(normalized[field])
     normalized["risk"] = normalized.get("risk") or normalized.get("domain") or "Рекомендация"
     normalized["recommendation"] = normalized.get("recommendation") or normalized.get("action") or normalized.get("description")
-    _, profile = presentation_presales_profile(normalized)
+    semantic_key, profile = presentation_presales_profile(normalized)
+    ai_authored = str(item.get("source") or item.get("_source") or "").strip().lower() in {
+        "ии", "ai", "gemini", "groq"
+    }
     generic_titles = {"ит", "иб", "ит/иб", "рекомендация"}
     title_by_key = {
         "mfa": "Многофакторная аутентификация",
@@ -8633,10 +8636,7 @@ def presentation_risk_entry(item):
         if field in normalized:
             normalized[field] = expand_regulatory_references(normalized[field])
     normalized["recommendation"] = normalized.get("recommendation") or normalized.get("action") or normalized.get("description")
-    semantic_key, profile = presentation_presales_profile(normalized)
-    ai_authored = str(item.get("source") or item.get("_source") or "").strip().lower() in {
-        "ии", "ai", "gemini", "groq"
-    }
+    _, profile = presentation_presales_profile(normalized)
     raw_level, fill_color, text_color = presentation_severity_style(normalized.get("level"))
     return {
         "level": presentation_text(risk_level_label(raw_level), 16).upper(),
