@@ -3,7 +3,7 @@
 ## Release lanes
 
 - `v12.0.0`: previous production label.
-- `v12.9`: current stable production release.
+- `v12.10`: current stable production release.
 - `v12-rcN`: release candidate after Test validation, bug fixes only.
 - `v12`: stable release after production approval.
 
