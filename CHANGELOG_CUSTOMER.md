@@ -3,6 +3,28 @@
 This changelog is intended for production release notes that can be shown to customers.
 Keep this file focused only on customer-visible questionnaire and report changes.
 
+## v12
+
+Status: stable production release.
+
+Customer-visible improvements:
+- Added a concise branded PowerPoint presentation with the audit summary, infrastructure profile, key risks, IT and security recommendations, 90-day roadmap, and management decisions.
+- Added separate IT and information security maturity indicators to the presentation cover.
+- Added solution classes and relevant manufacturers to presentation recommendations.
+- Added a clearer final action slide with company contacts.
+- Reworked the infrastructure slide to explain the operational priorities created by the customer's environment.
+- Added a recommended action to every key risk in the presentation.
+- Unified the recommendation slides, removed semantic duplicates, and ensured that actions are shown as complete statements.
+- Improved presales wording so presentation risks, impacts, and actions are concise and complete.
+- Limited recommended manufacturers to the maintained solution portfolio.
+- Improved the 90-day plan so later phases continue the identified priorities instead of showing generic actions.
+- Simplified customer delivery to one management presentation.
+- Added an early company profile slide explaining the audit team's capabilities and delivery scope.
+- Made the company's delivered IT project track record more prominent.
+- Refined company founding facts and improved the audit conclusion download experience.
+- Polished the final audit conclusion action for a clearer, more focused download.
+- Centered the final download action and improved its responsive behavior.
+
 ## v12.0.0
 
 Status: stable production release.

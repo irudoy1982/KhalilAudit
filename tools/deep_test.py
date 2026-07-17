@@ -3,6 +3,8 @@ from __future__ import annotations
 import ast
 import os
 import re
+import zipfile
+from io import BytesIO
 from pathlib import Path
 
 import pandas as pd
@@ -246,6 +248,18 @@ def test_customer_report_separates_solutions_from_manufacturers() -> None:
     assert_true("WAF" in solution and "F5" not in solution and "Imperva" not in solution, f"Solutions should be classes, got: {solution}")
     assert_true("Check Point" in manufacturers, f"WAF manufacturer should be resolved from matrix, got: {manufacturers}")
 
+    change_item = {
+        "risk": "Отсутствие формализованного управления изменениями и конфигурациями",
+        "impact": "Ошибки могут привести к уязвимостям.",
+    }
+    change_solution = helpers["solution_categories_for_report_item"](change_item)
+    change_vendors = helpers["portfolio_manufacturers_for_report_item"](change_item)
+    assert_true("Change Management" in change_solution, f"Unexpected change-management solution: {change_solution}")
+    assert_true("Qualys" not in change_vendors and "Tenable" not in change_vendors, f"VM vendors leaked into change management: {change_vendors}")
+
+    legacy_vendors = helpers["portfolio_manufacturers_for_report_item"]({"risk": "Устаревшие Windows 7 на рабочих станциях"})
+    assert_true(legacy_vendors == "Microsoft", f"Legacy OS slide should recommend Microsoft only, got: {legacy_vendors}")
+
 
 def test_segmentation_never_maps_to_dlp() -> None:
     helpers = load_portfolio_helpers()
@@ -337,6 +351,113 @@ def test_sales_sheet_navigation_layout() -> None:
     assert_true("ws.column_dimensions['J'].width = 16" in internal, "Source column should remain visible")
 
 
+def test_presentation_template_rendering() -> None:
+    module_text = APP.read_text(encoding="utf-8")
+    namespace = {"BytesIO": BytesIO, "re": re}
+    exec(extract_function_source(module_text, "render_audit_presentation_template"), namespace)
+    render = namespace["render_audit_presentation_template"]
+
+    brand_identity = {
+        "khalil": ("ТОО «Khalil Trade»", "info@khalilgroup.kz", "+7 706 701 48 35", "2020", "Bolashak Tamer Group"),
+        "btg": ("ТОО «Bolashak Tamer Group»", "info@btgroup.kz", "+7 706 700 48 35", "2019", "Khalil Trade"),
+    }
+    for brand in ("khalil", "btg"):
+        template = ROOT / "static" / f"audit_presentation_{brand}.pptx"
+        with zipfile.ZipFile(template, "r") as archive:
+            source_xml = "\n".join(
+                archive.read(name).decode("utf-8")
+                for name in archive.namelist()
+                if name.startswith("ppt/slides/slide") and name.endswith(".xml")
+            )
+        tokens = set(re.findall(r"\{\{([A-Z0-9_]+)\}\}", source_xml))
+        replacements = {token: f"Тест & проверка {token}" for token in tokens}
+        rendered = render(template, replacements)
+
+        with zipfile.ZipFile(BytesIO(rendered), "r") as archive:
+            slide_names = [
+                name for name in archive.namelist()
+                if name.startswith("ppt/slides/slide") and name.endswith(".xml")
+            ]
+            rendered_xml = "\n".join(archive.read(name).decode("utf-8") for name in slide_names)
+        assert_true(len(slide_names) == 9, f"{brand}: expected 9 slides, got {len(slide_names)}")
+        assert_true("Кто стоит за аудитом" in rendered_xml, f"{brand}: company profile slide is missing")
+        company_name, email, phone, founded_year, foreign_brand = brand_identity[brand]
+        assert_true(company_name in rendered_xml, f"{brand}: company name is missing")
+        assert_true(email in rendered_xml and phone in rendered_xml, f"{brand}: contact details are missing")
+        assert_true(founded_year in rendered_xml, f"{brand}: founding year is missing")
+        assert_true(foreign_brand not in rendered_xml, f"{brand}: foreign brand data leaked into presentation")
+        assert_true("{{" not in rendered_xml, f"{brand}: unresolved presentation placeholders")
+        assert_true("Тест &amp; проверка" in rendered_xml, f"{brand}: XML escaping failed")
+
+
+def test_presentation_text_is_self_contained() -> None:
+    module_text = APP.read_text(encoding="utf-8")
+    namespace = {"re": re}
+    exec(extract_function_source(module_text, "presentation_text"), namespace)
+    clean = namespace["presentation_text"]
+    assert_true(clean("Нормальный русский текст") == "Нормальный русский текст", "Normal text was changed")
+    assert_true(clean("  Строка   с пробелами. ") == "Строка с пробелами", "Whitespace cleanup failed")
+    shortened = clean("Очень длинная рекомендация " * 20, 80)
+    assert_true(len(shortened) <= 80 and shortened.endswith("."), "Long text was not shortened to a complete phrase")
+
+
+def test_presentation_actions_are_complete_and_deduplicated() -> None:
+    module_text = APP.read_text(encoding="utf-8")
+    namespace = {"re": re}
+    for name in (
+        "presentation_text",
+        "presentation_action_text",
+        "risk_level_label",
+        "risk_semantic_key",
+        "presentation_recommendation_key",
+        "presentation_presales_profile",
+        "presentation_risk_entry",
+    ):
+        exec(extract_function_source(module_text, name), namespace)
+
+    clean_action = namespace["presentation_action_text"]
+    action = clean_action(
+        "1. Провести аудит текущей конфигурации маршрутизации и сетевой топологии. "
+        "2. Подготовить целевую архитектуру и план модернизации. "
+        "3. Согласовать этапы внедрения.",
+        120,
+    )
+    assert_true(action.endswith("."), f"Presentation action is incomplete: {action}")
+    assert_true(not re.search(r"\b\d+\.\s*$", action), f"Presentation action ends with a dangling number: {action}")
+
+    recommendation_key = namespace["presentation_recommendation_key"]
+    generic_mfa = recommendation_key({"domain": "ИБ", "action": "Внедрить MFA для критичных и удаленных доступов."})
+    explicit_mfa = recommendation_key({"risk": "Отсутствует многофакторная аутентификация"})
+    assert_true(generic_mfa == explicit_mfa == "mfa", "MFA recommendations are not deduplicated semantically")
+    software_lifecycle = recommendation_key({
+        "risk": "Проблемы с управлением жизненным циклом программного обеспечения",
+        "recommendation": "Вести реестр версий и обновлений.",
+    })
+    assert_true(software_lifecycle == "itam", "Software lifecycle recommendation should map to ITAM, not AppSec or patching")
+
+    change_key = recommendation_key({
+        "risk": "Отсутствие формализованного управления изменениями и конфигурациями",
+        "impact": "Ошибки могут привести к уязвимостям.",
+    })
+    assert_true(change_key == "change_management", "Change management should not map to vulnerability management")
+
+    _, monitoring_profile = namespace["presentation_presales_profile"]({
+        "risk": "Отсутствие централизованного мониторинга производительности",
+        "recommendation": "Внедрить Zabbix или Prometheus.",
+    })
+    profile_text = str(monitoring_profile)
+    assert_true("Zabbix" not in profile_text and "Prometheus" not in profile_text, "Non-portfolio monitoring brands leaked into presentation")
+    assert_true(monitoring_profile["action"].endswith("."), "Monitoring action must be a complete sentence")
+
+    network_risk = namespace["presentation_risk_entry"]({
+        "level": "HIGH",
+        "risk": "Недостаточная производительность и масштабируемость сетевой инфраструктуры",
+        "impact": "Масштабирование затруднено, сегментация неизвестна.",
+        "recommendation": "Провести аудит сети.",
+    })
+    assert_true("сегментац" not in network_risk["impact"].lower(), "Network performance slide must not invent missing segmentation")
+
+
 def main() -> None:
     tests = [
         test_ai_first_sales_behavior,
@@ -351,6 +472,9 @@ def main() -> None:
         test_ospf_is_not_segmentation_evidence,
         test_customer_and_sales_language_avoids_size_labels,
         test_sales_sheet_navigation_layout,
+        test_presentation_template_rendering,
+        test_presentation_text_is_self_contained,
+        test_presentation_actions_are_complete_and_deduplicated,
     ]
     for test in tests:
         test()

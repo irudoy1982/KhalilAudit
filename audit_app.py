@@ -104,7 +104,7 @@ def get_app_secret(name, default=None):
 
 
 APP_INSTANCE_DEFAULT = "Khalil"
-APP_VERSION = "12.0.0"
+APP_VERSION = "12.9"
 
 
 def get_app_instance_label():
@@ -2479,6 +2479,73 @@ def inject_audit_design():
         margin: 0 !important;
     }
 
+    .st-key-presentation_download,
+    div[data-testid="stElementContainer"]:has(.st-key-presentation_download) {
+        width: min(460px, 100%) !important;
+        max-width: 460px !important;
+        margin: 18px auto 10px auto !important;
+        box-sizing: border-box;
+    }
+
+    .st-key-presentation_download [data-testid="stDownloadButton"] {
+        width: 100% !important;
+        max-width: 100% !important;
+    }
+
+    .st-key-presentation_download [data-testid="stDownloadButton"] button {
+        width: 100% !important;
+        max-width: 100% !important;
+        box-sizing: border-box;
+        min-height: 58px;
+        background: var(--audit-accent);
+        color: #ffffff;
+        border: 1px solid var(--audit-accent);
+        border-radius: 8px;
+        font-size: 16px;
+        font-weight: 760;
+        box-shadow: 0 12px 28px rgba(15, 118, 110, 0.24);
+        transition: background 160ms ease, color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+    }
+
+    .st-key-presentation_download [data-testid="stDownloadButton"] button:hover {
+        background: #0b5f59;
+        color: #ffffff;
+        border-color: #0b5f59;
+        box-shadow: 0 15px 34px rgba(15, 118, 110, 0.30);
+        transform: translateY(-2px);
+    }
+
+    .st-key-presentation_download [data-testid="stDownloadButton"] button:active {
+        transform: translateY(0);
+        box-shadow: 0 7px 16px rgba(15, 118, 110, 0.20);
+    }
+
+    .st-key-presentation_download [data-testid="stDownloadButton"] button:focus-visible {
+        outline: 3px solid rgba(15, 118, 110, 0.24);
+        outline-offset: 3px;
+    }
+
+    .st-key-presentation_download [data-testid="stDownloadButton"] button p {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+    }
+
+    .st-key-presentation_download [data-testid="stDownloadButton"] button p::before {
+        content: "↓";
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 30px;
+        height: 30px;
+        border-radius: 50%;
+        background: rgba(255, 255, 255, 0.16);
+        font-size: 18px;
+        font-weight: 700;
+        line-height: 1;
+    }
+
     @media (max-width: 900px) {
         .audit-title {
             font-size: 26px;
@@ -2558,7 +2625,7 @@ def render_app_header():
             <div class="audit-title">Опросник технического аудита ИТ и ИБ</div>
             <p class="audit-subtitle">
                 Структурированный сбор данных для экспертной оценки инфраструктуры,
-                зрелости защиты и подготовки XLSX-отчета.
+                зрелости защиты и подготовки экспертного отчета и презентации.
             </p>
             <div class="audit-start-grid">
                 <div class="audit-start-card">
@@ -2570,8 +2637,8 @@ def render_app_header():
                     <span>Навигатор показывает готовность, слабые места и разделы, которые требуют внимания.</span>
                 </div>
                 <div class="audit-start-card">
-                    <strong>XLSX-отчет для обсуждения</strong>
-                    <span>На выходе формируется экспертная сводка, риски, домены защиты и быстрые улучшения.</span>
+                    <strong>Отчет и презентация для обсуждения</strong>
+                    <span>На выходе формируется краткая управленческая презентация с выводами, решениями и планом действий.</span>
                 </div>
             </div>
         </div>
@@ -3291,7 +3358,7 @@ def render_generation_guard(active):
     components.html(f"""
     <script>
     const target = window.parent;
-    const message = "Экспертный отчет формируется. Это может занять до 4 минут. Не закрывайте и не обновляйте страницу.";
+    const message = "Экспертная презентация формируется. Это может занять до 4 минут. Не закрывайте и не обновляйте страницу.";
 
     if (!target.__khalilBeforeUnloadHandler) {{
       target.__khalilBeforeUnloadHandler = (event) => {{
@@ -3320,7 +3387,7 @@ def render_generation_live_panel(stage_title, active_step=0):
         "Сопоставление масштаба инфраструктуры",
         "Расчет зрелости ИТ/ИБ",
         "Формирование экспертного заключения",
-        "Сборка XLSX и roadmap",
+        "Сборка презентации и плана действий",
         "Отправка результата",
     ]
     step_items = []
@@ -3458,7 +3525,7 @@ with st.expander("Инструкция по заполнению", expanded=Fals
     2. **Включайте только реальные разделы:** сеть, серверы, виртуализация, СХД, внутренние системы, ИБ и разработка открываются тумблерами. Если раздел включен, его вложенные обязательные поля нужно заполнить.
     3. **Смотрите навигатор слева:** красная точка означает, что раздел требует внимания, зеленая - раздел выглядит заполненным, серая - раздел отключен и не участвует в анкете.
     4. **Исправляйте по подсказкам на месте:** под каждым крупным блоком есть панель “что исправить”. Она показывает конкретные недостающие поля именно для этого раздела.
-    5. **Используйте предварительную аналитику:** блок “Предварительная аналитика” показывает сводку аудита и быстрые улучшения еще до формирования финального XLSX. Полную версию можно раскрыть ниже.
+    5. **Используйте предварительную аналитику:** блок “Предварительная аналитика” показывает сводку аудита и быстрые улучшения еще до формирования финального отчета. Полную версию можно раскрыть ниже.
     6. **Сохраняйте черновик при совместном заполнении:** скачайте JSON-черновик и передайте его коллеге. Он сможет загрузить файл в этом же блоке и продолжить заполнение с сохраненных ответов.
     7. **Не закрывайте страницу во время отчета:** формирование экспертного отчета может занять до 4 минут. Пока идет генерация, не обновляйте и не закрывайте вкладку.
 
@@ -4980,8 +5047,9 @@ def solution_categories_for_report_item(item):
 
     categories_by_key = {
         "mfa": "MFA / Conditional Access",
-        "legacy_os": "Миграция ОС; изоляция legacy-сегмента; vulnerability assessment",
+        "legacy_os": "Миграция на поддерживаемую ОС; изоляция legacy-сегмента",
         "siem_soc": "SOC / MSSP; SIEM; централизованный сбор логов",
+        "change_management": "ITSM / Change Management / CMDB",
         "patch": "Vulnerability Management; Patch Management",
         "endpoint_detection": "EDR / XDR / MDR",
         "backup": "Backup; immutable-копии; восстановление после ransomware",
@@ -4996,6 +5064,8 @@ def solution_categories_for_report_item(item):
         "dr": "Disaster Recovery; RTO/RPO-планирование",
         "appsec": "SAST / DAST / SCA",
         "business_systems": "Обследование бизнес-систем; интеграционный аудит",
+        "network_performance": "Аудит сетевой архитектуры; NMS / Network Performance Monitoring",
+        "itam": "ITAM / SAM / управление лицензиями",
     }
     return categories_by_key.get(key, "Уточнить класс решения по результатам пресейла")
 
@@ -5016,23 +5086,41 @@ def portfolio_manufacturers_for_report_item(item):
             gap_text="Нет отдельной категории IDS/IPS в матрице; проверить NGFW-портфель",
         )
 
+    if key == "legacy_os":
+        return portfolio_vendors_by_categories(
+            ["Operating Systems"],
+            preferred=["Microsoft"],
+            gap_text="Нет производителя ОС в матрице",
+            limit=1,
+        )
+
+    if key == "it_monitoring":
+        return portfolio_vendors_by_categories(
+            ["ITSM"],
+            preferred=["ManageEngine", "Broadcom (Symantec)"],
+            exclude=["Ivanti"],
+            gap_text="Нет производителя мониторинга в матрице",
+            limit=2,
+        )
+
     category_map = {
         "mfa": (["MFA", "IAM"], [], ["ManageEngine"]),
-        "legacy_os": (["Operating Systems", "VM"], ["Microsoft", "Qualys", "Tenable", "Rapid7"], []),
-        "siem_soc": (["SOC", "SIEM"], ["Splunk", "IBM", "Rapid7", "Palo Alto", "Fortinet"], []),
+        "siem_soc": (["SOC", "SIEM"], ["Fortinet", "ManageEngine", "Splunk", "IBM", "Rapid7", "Palo Alto"], []),
+        "change_management": (["ITSM"], ["ManageEngine", "Ivanti", "Broadcom (Symantec)"], []),
         "patch": (["VM", "Patch Management"], ["Qualys", "Tenable", "Rapid7", "Ivanti"], []),
         "endpoint_detection": (["EDR", "XDR"], ["Fortinet", "Check Point", "CrowdStrike", "Trend Micro"], []),
         "backup": (["Backup"], [], []),
-        "web_waf": (["WAF"], ["Check Point", "Fortinet", "F5", "Imperva", "Cloudflare"], []),
+        "web_waf": (["WAF"], ["Cloudflare", "Fortinet", "Check Point", "F5", "Imperva"], []),
         "pam": (["PAM"], ["Wallix", "CyberArk", "BeyondTrust"], ["ManageEngine"]),
         "dlp": (["DLP"], [], []),
         "mail": (["Email", "Mail Security"], ["Check Point", "Fortinet", "Trend Micro", "Forcepoint"], []),
         "segmentation": (["NAC", "NGFW", "Network Equipment"], ["Fortinet", "Cisco", "Huawei", "Check Point"], []),
-        "it_monitoring": (["ITSM", "Monitoring", "NMS"], [], []),
         "virtualization": (["Virtualization"], [], []),
         "storage": (["Storage", "Backup"], [], []),
         "dr": (["Backup", "DR"], [], []),
         "appsec": (["SAST", "DAST", "SCA", "VM"], ["Qualys", "Checkmarx", "HCL AppScan"], []),
+        "network_performance": (["Network Equipment", "Monitoring", "NMS"], ["Cisco", "Fortinet", "ManageEngine", "Broadcom"], []),
+        "itam": (["ITAM", "ITSM"], ["ManageEngine", "Ivanti"], []),
     }
 
     if key in category_map:
@@ -6384,6 +6472,9 @@ def risk_semantic_key(item):
         ("mfa", ("mfa", "многофактор", "2fa", "двухфактор")),
         ("legacy_os", ("legacy", "устаревш", "windows xp", "windows vista", "windows 7", "windows 8", "2008", "2012 r2")),
         ("siem_soc", ("siem", "soc", "мониторинг событий", "централизованный мониторинг")),
+        ("network_performance", ("масштабируемость сетевой", "производительность сетевой", "сетевая топология", "конфигурации маршрутизации")),
+        ("itam", ("программными активами", "жизненным циклом", "управление активами", "лицензи", "инвентаризац")),
+        ("change_management", ("управления изменениями", "управление изменениями", "change management", "изменениями и конфигурациями")),
         ("patch", ("patch", "обновлен", "cve", "уязвим")),
         ("endpoint_detection", ("edr", "xdr", "endpoint", "рабочих мест", "lateral movement")),
         ("backup", ("backup", "резерв", "immutable", "ransomware")),
@@ -6880,6 +6971,493 @@ def build_management_decisions(results, context):
     if context.get("has_development"):
         decisions.append("Добавить требования AppSec в процесс релизов: SAST/DAST, проверка зависимостей и критерии допуска в продуктив.")
     return decisions[:6]
+
+
+# --- Презентация по результатам аудита ---
+def presentation_text(value, limit=180):
+    text = str(value or "")
+    suspicious = sum(text.count(marker) for marker in ("Р", "С", "Ð", "Ñ"))
+    if suspicious >= 3:
+        try:
+            repaired = text.encode("cp1251").decode("utf-8")
+            original_badness = sum(text.count(marker) for marker in ("Р", "С", "Ð", "Ñ"))
+            repaired_badness = sum(repaired.count(marker) for marker in ("Р", "С", "Ð", "Ñ"))
+            if repaired_badness < original_badness:
+                text = repaired
+        except UnicodeError:
+            pass
+    text = re.sub(r"\s+", " ", text).strip(" .;-")
+    if not text:
+        return "Не указано"
+    if len(text) <= limit:
+        return text
+    candidate = text[:limit]
+    sentence_end = max(candidate.rfind(". "), candidate.rfind("! "), candidate.rfind("? "))
+    if sentence_end >= max(48, limit // 2):
+        return candidate[: sentence_end + 1].strip()
+    shortened = candidate.rsplit(" ", 1)[0].rstrip(" ,;:.-")
+    return f"{shortened}."
+
+
+def presentation_brand_key():
+    return "btg" if "btg" in get_app_instance_label().lower() else "khalil"
+
+
+def presentation_action_text(value, limit=165):
+    def complete_sentence(sentence):
+        sentence = str(sentence or "").strip(" .;-")
+        words = sentence.split()
+        incomplete_tail = {"и", "или", "а", "но", "с", "со", "для", "на", "по", "в", "во", "к", "из", "под"}
+        while words and words[-1].lower().strip(".,:;()") in incomplete_tail:
+            words.pop()
+        sentence = " ".join(words)
+        if sentence and sentence[-1] not in ".!?":
+            sentence += "."
+        return sentence
+
+    text = presentation_text(value, 10000)
+    text = re.sub(r"\s*\((?:например|напр\.)[^)]*\)", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s+\d+\.\s*$", "", text).strip()
+    numbered_parts = [
+        part.strip(" .;-")
+        for part in re.split(r"(?:^|\s)\d+\.\s*", text)
+        if part.strip(" .;-")
+    ]
+    parts = numbered_parts if len(numbered_parts) > 1 else [
+        part.strip(" .;-")
+        for part in re.split(r";\s*", text)
+        if part.strip(" .;-")
+    ]
+
+    selected = []
+    for part in parts:
+        sentence = complete_sentence(presentation_text(part, limit))
+        if not sentence:
+            continue
+        candidate = " ".join([*selected, sentence])
+        if selected and len(candidate) > limit:
+            break
+        selected.append(sentence)
+        if len(candidate) >= limit * 0.72:
+            break
+    return " ".join(selected) or complete_sentence(presentation_text(text, limit))
+
+
+def presentation_recommendation_key(item):
+    normalized = {
+        "risk": item.get("risk") or item.get("domain") or "",
+        "description": item.get("description") or "",
+        "impact": item.get("impact") or "",
+        "recommendation": item.get("recommendation") or item.get("action") or "",
+    }
+    return risk_semantic_key(normalized)
+
+
+def presentation_presales_profile(item):
+    key = presentation_recommendation_key(item)
+    profiles = {
+        "legacy_os": {
+            "title": "Устаревшие ОС требуют плана миграции",
+            "impact": "Неподдерживаемые ОС повышают риск эксплуатации известных уязвимостей и ограничивают применение современных средств защиты.",
+            "action": "Составить реестр устаревших ОС, согласовать миграцию и временно изолировать системы, которые нельзя обновить сразу.",
+        },
+        "network_performance": {
+            "title": "Производительность сети требует подтверждения измерениями",
+            "impact": "Без замеров загрузки каналов, задержек и отказоустойчивости нельзя достоверно оценить запас производительности сети.",
+            "action": "Провести аудит топологии и загрузки каналов, определить узкие места и подготовить целевую архитектуру сети.",
+        },
+        "change_management": {
+            "title": "Изменения и конфигурации управляются неформально",
+            "impact": "Несогласованные изменения повышают вероятность простоев, ошибок конфигурации и длительного восстановления критичных сервисов.",
+            "action": "Ввести единый процесс запроса, согласования, тестирования, внедрения и отката изменений с назначенными владельцами.",
+        },
+        "it_monitoring": {
+            "title": "Нет единого мониторинга доступности и производительности",
+            "impact": "Без централизованных метрик команда поздно замечает деградацию сервисов и не может обоснованно планировать емкость.",
+            "action": "Определить критичные метрики, пороги и владельцев, затем внедрить единый контроль доступности, производительности и емкости.",
+        },
+        "mfa": {
+            "title": "Критичные доступы не полностью защищены MFA",
+            "impact": "Компрометация пароля может открыть доступ к почте, удаленным подключениям, административным консолям и бизнес-системам.",
+            "action": "Проверить фактическое покрытие MFA и закрыть административные, удаленные и критичные доступы без второго фактора.",
+        },
+        "siem_soc": {
+            "title": "События ИБ не собираются в единый контур",
+            "impact": "Разрозненные журналы замедляют обнаружение атак и усложняют расследование инцидентов в критичных системах.",
+            "action": "Определить критичные источники событий и сценарии контроля, затем выбрать поэтапную модель SIEM, SOC или MSSP.",
+        },
+        "endpoint_detection": {
+            "title": "Endpoint-защита требует усиления обнаружения и реагирования",
+            "impact": "Базовая антивирусная защита не дает полной телеметрии для расследования сложных атак и бокового перемещения.",
+            "action": "Проверить покрытие EPP, провести пилот EDR или MDR на критичных группах и утвердить регламент реагирования.",
+        },
+        "web_waf": {
+            "title": "Публичные веб-сервисы требуют прикладной защиты",
+            "impact": "Интернет-магазин и личный кабинет подвержены прикладным атакам, бот-активности и нарушениям доступности.",
+            "action": "Оценить веб-периметр, проверить действующие политики и внедрить WAF с контролем блокировок и доступности.",
+        },
+        "patch": {
+            "title": "Уязвимости и обновления требуют управляемого цикла",
+            "impact": "Без регулярной инвентаризации и SLA критичные уязвимости могут оставаться открытыми дольше допустимого срока.",
+            "action": "Ввести регулярное сканирование, приоритизацию, SLA устранения и контроль исключений по критичным уязвимостям.",
+        },
+        "backup": {
+            "title": "Восстановление критичных сервисов требует проверки",
+            "impact": "Наличие резервных копий не гарантирует восстановление в требуемые сроки после сбоя или ransomware.",
+            "action": "Согласовать RTO и RPO, изолировать критичные копии и регулярно подтверждать восстановление контрольными тестами.",
+        },
+        "itam": {
+            "title": "Программные активы требуют единого учета",
+            "impact": "Неполный учет версий, лицензий и сроков поддержки затрудняет обновления, бюджетирование и контроль технического долга.",
+            "action": "Создать единый реестр ПО, лицензий, версий, владельцев и сроков поддержки с регулярной актуализацией.",
+        },
+        "pam": {
+            "title": "Привилегированные доступы требуют отдельного контроля",
+            "impact": "Общие или неконтролируемые административные учетные записи повышают риск несанкционированных изменений и компрометации.",
+            "action": "Инвентаризировать привилегированные учетные записи, разделить персональные доступы и внедрить контроль критичных сессий.",
+        },
+        "segmentation": {
+            "title": "Архитектуру сегментации необходимо подтвердить",
+            "impact": "Без схемы VLAN, ACL и межсегментных политик нельзя достоверно оценить возможность бокового перемещения.",
+            "action": "Проверить схему сегментов и матрицу потоков, подтвердить правила фильтрации и устранить выявленные разрывы.",
+        },
+        "mail": {
+            "title": "Почтовый контур требует усиления защиты",
+            "impact": "Фишинг и вредоносные вложения остаются одним из основных каналов компрометации учетных записей и рабочих мест.",
+            "action": "Проверить текущие почтовые политики и усилить защиту от фишинга, подмены отправителя и вредоносных вложений.",
+        },
+        "appsec": {
+            "title": "Проверки безопасности необходимо встроить в релизы",
+            "impact": "Без автоматизированных проверок уязвимости приложений и зависимостей могут попадать в продуктивную среду.",
+            "action": "Определить обязательные проверки кода, зависимостей и веб-приложений, затем встроить их в процесс выпуска релизов.",
+        },
+    }
+    return key, profiles.get(key, {})
+
+
+def presentation_recommendation_entry(item):
+    normalized = dict(item)
+    normalized["risk"] = item.get("risk") or item.get("domain") or "Рекомендация"
+    normalized["recommendation"] = item.get("recommendation") or item.get("action") or item.get("description")
+    semantic_key, profile = presentation_presales_profile(normalized)
+    generic_titles = {"ит", "иб", "ит/иб", "рекомендация"}
+    title_by_key = {
+        "mfa": "Многофакторная аутентификация",
+        "legacy_os": "Обновление устаревших операционных систем",
+        "siem_soc": "Мониторинг событий и реагирование",
+        "patch": "Управление уязвимостями и обновлениями",
+        "endpoint_detection": "Защита конечных точек",
+        "backup": "Резервное копирование и восстановление",
+        "web_waf": "Защита публичных веб-сервисов",
+        "pam": "Контроль привилегированных доступов",
+        "network_performance": "Управляемость и производительность сети",
+        "itam": "Управление программными активами",
+        "change_management": "Управление изменениями и конфигурациями",
+        "it_monitoring": "Централизованный мониторинг ИТ",
+    }
+    raw_title = str(normalized["risk"] or "Рекомендация").strip()
+    if profile.get("title"):
+        raw_title = profile["title"]
+    elif raw_title.lower() in generic_titles:
+        raw_title = title_by_key.get(semantic_key, "Практическая мера улучшения")
+    title = presentation_text(raw_title, 78)
+    action = profile.get("action") or presentation_action_text(normalized["recommendation"], 165)
+    solution = presentation_text(solution_categories_for_report_item(normalized), 88)
+    vendors = portfolio_manufacturers_for_report_item(normalized)
+    if "матрице" in str(vendors).lower() or "нет подходящего" in str(vendors).lower():
+        vendors = "Подбор после уточнения требований"
+    else:
+        vendor_limit = 5 if semantic_key == "web_waf" else 4
+        vendors = ", ".join(split_portfolio_list(vendors)[:vendor_limit])
+    vendors = presentation_text(vendors, 92)
+    return {
+        "key": semantic_key,
+        "title": title,
+        "action": action,
+        "solution": solution,
+        "vendors": vendors,
+    }
+
+
+def presentation_risk_entry(item):
+    normalized = dict(item)
+    normalized["recommendation"] = item.get("recommendation") or item.get("action") or item.get("description")
+    _, profile = presentation_presales_profile(normalized)
+    return {
+        "level": presentation_text(risk_level_label(item.get("level", "MEDIUM")), 16).upper(),
+        "title": profile.get("title") or presentation_text(item.get("risk", "Риск требует внимания"), 78),
+        "impact": profile.get("impact") or presentation_action_text(
+            item.get("impact") or item.get("description") or "Требуется уточнить влияние риска.",
+            155,
+        ),
+        "action": profile.get("action") or presentation_action_text(normalized["recommendation"], 135),
+    }
+
+
+def presentation_focus_items(context, business_systems):
+    users = int(context.get("users", 0) or 0)
+    servers = int(context.get("servers", 0) or 0)
+    continuity_scope = []
+    if servers:
+        continuity_scope.append(russian_count(servers, "сервер", "сервера", "серверов"))
+    if business_systems:
+        continuity_scope.append(russian_count(business_systems, "бизнес-система", "бизнес-системы", "бизнес-систем"))
+    continuity_subject = " и ".join(continuity_scope) or "Критичные сервисы"
+
+    focus = [
+        (
+            "Непрерывность сервисов",
+            f"{continuity_subject} требуют согласованных RTO/RPO и регулярной проверки восстановления.",
+        ),
+        (
+            "Управляемость среды",
+            f"{users} рабочих мест и серверный контур требуют единого контроля обновлений, изменений и конфигураций.",
+        ),
+    ]
+    if context.get("has_public_web"):
+        focus.append((
+            "Цифровой периметр",
+            "Публичные сервисы требуют проверки WAF/DDoS, внешних доступов и мониторинга событий.",
+        ))
+    else:
+        focus.append((
+            "Контроль доступа",
+            "Критичные и удаленные доступы требуют MFA, учета привилегий и регулярного пересмотра прав.",
+        ))
+    return focus
+
+
+def build_audit_presentation_replacements(c_info, results, final_score, it_maturity_score):
+    context = build_context(results, c_info)
+    domain_scores = calculate_domain_scores(results)
+    rule_risks = generate_rule_based_risks(results, context)
+    risk_sources = st.session_state.get("last_report_risk_sources") or rule_risks
+    ai_narrative = sanitize_ai_audit_narrative(
+        st.session_state.get("ai_audit_narrative", {}),
+        results,
+    )
+    roadmap_items = ai_narrative.get("roadmap") or build_contextual_roadmap(
+        results,
+        context,
+        domain_scores,
+        rule_risks,
+    )
+    conclusions = build_expert_conclusion(
+        results,
+        context,
+        final_score,
+        domain_scores,
+        roadmap_items,
+    )
+    summary_items = []
+    for item in [*ai_narrative.get("executive_summary", []), *conclusions]:
+        clean_item = presentation_action_text(item, 220)
+        if clean_item not in summary_items:
+            summary_items.append(clean_item)
+        if len(summary_items) >= 4:
+            break
+
+    if final_score < 35:
+        summary_title = "Ключевые процессы защиты пока зависят от отдельных средств и ручных действий"
+    elif final_score < 60:
+        summary_title = "Базовые меры работают, но контроль и реагирование требуют систематизации"
+    else:
+        summary_title = "Защитный контур сформирован; следующий резерв — устойчивость и измеримость"
+
+    profile_title, profile_text = infrastructure_profile(context)
+    business_systems = sum(
+        bool(context.get(key))
+        for key in ("has_erp", "has_crm", "has_accounting", "has_hrm", "has_document_flow", "has_mail")
+    )
+    focus_items = presentation_focus_items(context, business_systems)
+
+    normalized_risks = []
+    for item in risk_sources:
+        if not isinstance(item, dict):
+            continue
+        normalized_risks.append({
+            "level": risk_level_label(item.get("level", "MEDIUM")),
+            "risk": item.get("risk", "Риск"),
+            "impact": item.get("impact") or item.get("description") or "Требуется уточнение влияния",
+            "recommendation": item.get("recommendation") or item.get("action") or "Требуется план улучшений",
+            "vendors": item.get("vendors", []),
+            "area": item.get("area") or item.get("_ai_area") or "ИТ/ИБ",
+        })
+    normalized_risks = normalized_risks[:12]
+
+    recommendation_items = []
+    recommendation_keys = set()
+
+    def add_recommendation(item):
+        entry = presentation_recommendation_entry(item)
+        key = entry["key"] or re.sub(r"\s+", " ", entry["title"].lower())
+        if key in recommendation_keys:
+            return
+        recommendation_items.append(entry)
+        recommendation_keys.add(key)
+
+    for item in normalized_risks:
+        add_recommendation(item)
+    for item in roadmap_items:
+        add_recommendation(item)
+
+    recommendation_fallback = [
+        {"risk": "Мониторинг инфраструктуры", "recommendation": "Определить пороги, владельцев и регулярный обзор доступности и емкости.", "vendors": ["IT Monitoring"]},
+        {"risk": "Управление изменениями", "recommendation": "Фиксировать изменения, окна обслуживания, результат и порядок отката.", "vendors": ["ITSM/CMDB"]},
+        {"risk": "Резервное копирование", "recommendation": "Согласовать RTO/RPO и регулярно подтверждать восстановление критичных сервисов.", "vendors": ["Backup"]},
+        {"risk": "Управление активами", "recommendation": "Поддерживать единый реестр оборудования, систем, владельцев и жизненного цикла.", "vendors": ["ITSM/ITAM"]},
+        {"risk": "Контроль доступа", "recommendation": "Проверить критичные учетные записи, MFA, исключения и привилегии.", "vendors": ["MFA"]},
+        {"risk": "Защита конечных точек", "recommendation": "Контролировать покрытие агентов, телеметрию и сценарии реагирования.", "vendors": ["EDR/XDR"]},
+        {"risk": "Управление уязвимостями", "recommendation": "Ввести регулярное сканирование, SLA устранения и контроль исключений.", "vendors": ["VM"]},
+        {"risk": "Мониторинг событий", "recommendation": "Определить минимальный набор источников и регламент разбора инцидентов.", "vendors": ["SIEM/SOC"]},
+    ]
+    for item in recommendation_fallback:
+        if len(recommendation_items) >= 8:
+            break
+        add_recommendation(item)
+
+    roadmap_by_phase = {
+        "0-30": [],
+        "31-60": [],
+        "61-90": [],
+    }
+    for item in roadmap_items:
+        phase = str(item.get("phase", ""))
+        phase_key = next((key for key in roadmap_by_phase if key in phase), None)
+        if not phase_key:
+            continue
+        action = presentation_action_text(item.get("action") or item.get("recommendation"), 170)
+        if action not in roadmap_by_phase[phase_key]:
+            roadmap_by_phase[phase_key].append(action)
+
+    roadmap_phase_by_key = {
+        "mfa": "0-30",
+        "legacy_os": "0-30",
+        "change_management": "31-60",
+        "network_performance": "31-60",
+        "endpoint_detection": "31-60",
+        "web_waf": "31-60",
+        "it_monitoring": "61-90",
+        "siem_soc": "61-90",
+        "backup": "61-90",
+        "patch": "61-90",
+    }
+    for entry in recommendation_items:
+        phase = roadmap_phase_by_key.get(entry["key"])
+        if not phase or len(roadmap_by_phase[phase]) >= 2:
+            continue
+        action = presentation_action_text(entry["action"], 150)
+        if action not in roadmap_by_phase[phase]:
+            roadmap_by_phase[phase].append(action)
+
+    roadmap_fallback = {
+        "0-30": ["Назначить владельцев рисков и подтвердить приоритеты", "Запустить быстрые меры по критичным доступам и восстановлению"],
+        "31-60": ["Провести пилоты выбранных мер и зафиксировать критерии успеха", "Формализовать процессы контроля и отчетности"],
+        "61-90": ["Масштабировать подтвержденные решения", "Проверить остаточные риски и обновить план развития"],
+    }
+    for phase, defaults in roadmap_fallback.items():
+        for item in defaults:
+            if len(roadmap_by_phase[phase]) >= 2:
+                break
+            roadmap_by_phase[phase].append(item)
+
+    decisions = build_management_decisions(results, context)
+    while len(decisions) < 4:
+        decisions.append("Согласовать владельца, срок и измеримый критерий результата для следующего этапа.")
+
+    replacements = {
+        "COMPANY": presentation_text(c_info.get("Наименование компании", "Компания"), 54),
+        "INDUSTRY": presentation_text(c_info.get("Сфера деятельности", ""), 38),
+        "CITY": presentation_text(c_info.get("Город", ""), 28),
+        "SCORE": str(int(final_score)),
+        "IT_SCORE": str(int(it_maturity_score)),
+        "DATE": datetime.now().strftime("%d.%m.%Y"),
+        "SUMMARY_TITLE": presentation_text(summary_title, 120),
+        "USERS": str(context.get("users", 0)),
+        "SERVERS": str(context.get("servers", 0)),
+        "PUBLIC": "Есть" if context.get("has_public_web") else "Нет",
+        "BUSINESS": str(business_systems),
+        "PROFILE": presentation_text(f"{profile_title}. {profile_text}", 240),
+    }
+    for index, (title, text) in enumerate(focus_items, start=1):
+        replacements[f"FOCUS_{index}_TITLE"] = presentation_text(title, 42)
+        replacements[f"FOCUS_{index}_TEXT"] = presentation_text(text, 145)
+
+    for index in range(4):
+        replacements[f"SUMMARY_{index + 1}"] = summary_items[index] if index < len(summary_items) else "Уточнить приоритеты и владельцев на рабочей сессии."
+        risk = normalized_risks[index] if index < len(normalized_risks) else {
+            "level": "Средний",
+            "risk": "Требуется дополнительная проверка",
+            "impact": "Для точной оценки необходимо подтвердить фактическую архитектуру и действующие процессы.",
+            "recommendation": "Провести рабочую сессию и подтвердить фактическое состояние контроля.",
+        }
+        risk_entry = presentation_risk_entry(risk)
+        replacements[f"RISK_{index + 1}_LEVEL"] = risk_entry["level"]
+        replacements[f"RISK_{index + 1}_TITLE"] = risk_entry["title"]
+        replacements[f"RISK_{index + 1}_IMPACT"] = risk_entry["impact"]
+        replacements[f"RISK_{index + 1}_RECOMMENDATION"] = risk_entry["action"]
+        replacements[f"DECISION_{index + 1}"] = presentation_text(decisions[index], 205)
+
+    for index, entry in enumerate(recommendation_items[:8], start=1):
+        replacements[f"REC_{index}_TITLE"] = entry["title"]
+        replacements[f"REC_{index}_ACTION"] = entry["action"]
+        replacements[f"REC_{index}_SOLUTION"] = entry["solution"]
+        replacements[f"REC_{index}_VENDORS"] = entry["vendors"]
+
+    for phase_index, phase in enumerate(("0-30", "31-60", "61-90"), start=1):
+        replacements[f"ROADMAP_{phase_index}_1"] = roadmap_by_phase[phase][0]
+        replacements[f"ROADMAP_{phase_index}_2"] = roadmap_by_phase[phase][1]
+    return replacements
+
+
+def render_audit_presentation_template(template_path, replacements):
+    import zipfile
+    from xml.sax.saxutils import escape
+
+    output = BytesIO()
+    with zipfile.ZipFile(template_path, "r") as source, zipfile.ZipFile(
+        output,
+        "w",
+        compression=zipfile.ZIP_DEFLATED,
+    ) as target:
+        for item in source.infolist():
+            content = source.read(item.filename)
+            if item.filename.endswith(".xml"):
+                xml_text = content.decode("utf-8")
+                for key, value in replacements.items():
+                    xml_text = xml_text.replace(f"{{{{{key}}}}}", escape(str(value)))
+                content = xml_text.encode("utf-8")
+            target.writestr(item, content)
+
+    presentation_bytes = output.getvalue()
+    with zipfile.ZipFile(BytesIO(presentation_bytes), "r") as check_zip:
+        unresolved = []
+        for name in check_zip.namelist():
+            if not name.startswith("ppt/slides/slide") or not name.endswith(".xml"):
+                continue
+            slide_xml = check_zip.read(name).decode("utf-8")
+            unresolved.extend(re.findall(r"\{\{[A-Z0-9_]+\}\}", slide_xml))
+        if unresolved:
+            raise ValueError(f"В презентации остались незаполненные поля: {sorted(set(unresolved))}")
+    return presentation_bytes
+
+
+def make_audit_presentation(c_info, results, final_score, it_maturity_score):
+    brand_key = presentation_brand_key()
+    template_path = os.path.join(
+        os.path.dirname(__file__),
+        "static",
+        f"audit_presentation_{brand_key}.pptx",
+    )
+    if not os.path.exists(template_path):
+        raise FileNotFoundError(f"Не найден шаблон презентации: {template_path}")
+    replacements = build_audit_presentation_replacements(
+        c_info,
+        results,
+        final_score,
+        it_maturity_score,
+    )
+    return render_audit_presentation_template(template_path, replacements)
 
 
 # --- Отчет ---
@@ -8074,7 +8652,7 @@ def render_analysis_preview(results, final_score):
         ("Зрелость ИБ", f"{final_score}%", f"{maturity_icon} {maturity}"),
         ("Доменов", str(len(domain_scores)), "в текущей оценке"),
         ("Рисков", str(len(risk_signals)), "быстрые сигналы"),
-        ("Статус", "Предпросмотр", "перед XLSX"),
+        ("Статус", "Предпросмотр", "перед отчетом"),
     ]
 
     for col, (label, value, hint) in zip(metric_cols, metric_values):
@@ -8169,7 +8747,7 @@ def render_analysis_teaser(results, final_score, validation_errors, section_stat
             <div class="teaser-card">
                 <div class="label">Готовность анкеты</div>
                 <div class="value">{readiness}%</div>
-                <div class="hint">до формирования XLSX</div>
+                <div class="hint">до формирования отчета</div>
             </div>
             <div class="teaser-card">
                 <div class="label">Быстрые сигналы</div>
@@ -8200,6 +8778,10 @@ if "cached_report_bytes" not in st.session_state:
     st.session_state.cached_report_bytes = None
 if "cached_sales_report_bytes" not in st.session_state:
     st.session_state.cached_sales_report_bytes = None
+if "cached_presentation_bytes" not in st.session_state:
+    st.session_state.cached_presentation_bytes = None
+if "presentation_status" not in st.session_state:
+    st.session_state.presentation_status = ""
 if "telegram_status" not in st.session_state:
     st.session_state.telegram_status = ""
 if "generation_attempt_started_at" not in st.session_state:
@@ -8368,14 +8950,14 @@ if validation_errors:
 # КНОПКА ЗАПУСКА ПРОЦЕССА
 # Она активна только тогда, когда процесс еще не запущен
 st.markdown("""
-Нажимая «Сформировать экспертный отчет», вы даете согласие
+Нажимая «Сформировать презентацию аудита», вы даете согласие
 на обработку персональных данных в соответствии с
 <a href="https://drive.google.com/file/d/1ypEIH9_ePGo3elkR2ifLFBulD5CAFOfs/view?usp=sharing" target="_blank">
 Политикой конфиденциальности
 </a>.
 """, unsafe_allow_html=True)
 if st.session_state.generation_state == "idle":
-    if st.button("Сформировать экспертный отчет", disabled=len(validation_errors) > 0, type="primary"):
+    if st.button("Сформировать презентацию аудита", disabled=len(validation_errors) > 0, type="primary"):
         st.session_state.telegram_generation_started_sent = False
         st.session_state.generation_state = "preparing"
         st.rerun()
@@ -8387,8 +8969,8 @@ if st.session_state.generation_state == "idle":
         alert_placeholder.markdown(
             """
             <div class="analysis-status-panel">
-                <div class="analysis-status-title">Формируется экспертный отчет</div>
-                Выполняется нормализация данных, расчет зрелости и сборка XLSX. Это может занять до 4 минут.
+                <div class="analysis-status-title">Формируется презентация аудита</div>
+                Выполняется нормализация данных, расчет зрелости и сборка рекомендаций. Это может занять до 4 минут.
                 <div class="page-lock-note">Не закрывайте и не обновляйте страницу до завершения формирования.</div>
             </div>
             """,
@@ -8407,7 +8989,7 @@ if st.session_state.generation_state == "idle":
             "Построение доменов безопасности...",
             "Глубокий анализ рисков...",
             "Формирование управленческого резюме...",
-            "Генерация XLSX отчета...",
+            "Генерация экспертной презентации...",
             "Финализация артефактов..."
         ]
 
@@ -8486,7 +9068,7 @@ if st.session_state.generation_state == "heavy_ai":
         st.error("Формирование отчета было сброшено по таймауту. Запустите формирование еще раз.")
         st.stop()
 
-    render_generation_live_panel("Идет глубокий анализ и сборка отчета", active_step=4)
+    render_generation_live_panel("Идет глубокий анализ и сборка презентации", active_step=4)
 
     if not st.session_state.telegram_generation_started_sent:
         st.session_state.telegram_status = send_internal_telegram_message(
@@ -8518,7 +9100,7 @@ if st.session_state.generation_state == "heavy_ai":
             st.session_state.ai_used_in_last_report = False
             st.session_state.ai_audit_narrative = {}
 
-            # Запуск экспертного анализа и сборки клиентского XLSX.
+            # Внутренний XLSX нужен только как источник листов для sales playbook.
             report_bytes = make_expert_excel(client_info, results, f_score)
             ai_report_ready = (
                 bool(st.session_state.get("ai_used_in_last_report"))
@@ -8542,6 +9124,22 @@ if st.session_state.generation_state == "heavy_ai":
             )
             st.session_state.cached_report_bytes = report_bytes
             st.session_state.cached_sales_report_bytes = sales_report_bytes
+            try:
+                st.session_state.cached_presentation_bytes = make_audit_presentation(
+                    client_info,
+                    results,
+                    f_score,
+                    it_maturity_score,
+                )
+                st.session_state.presentation_status = "ok"
+            except Exception as presentation_exc:
+                st.session_state.cached_presentation_bytes = None
+                st.session_state.presentation_status = "error"
+                send_internal_telegram_message(
+                    f"[{get_app_instance_label()}] Презентация не сформирована: "
+                    f"{redact_secret(presentation_exc, TOKEN)}"
+                )
+                raise RuntimeError("Не удалось сформировать клиентскую презентацию") from presentation_exc
         except Exception as exc:
             st.session_state.telegram_status = send_internal_telegram_message(
                 build_telegram_generation_error_text(
@@ -8552,13 +9150,14 @@ if st.session_state.generation_state == "heavy_ai":
             )
             st.session_state.generation_state = "idle"
             st.session_state.generation_attempt_started_at = None
-            st.error("Не удалось сформировать отчет. Попробуйте повторить позже.")
+            st.error("Не удалось сформировать презентацию. Попробуйте повторить позже.")
             st.stop()
 
     # Тихо отправляем в ТГ без создания задержек на экране
     st.session_state.telegram_status = ""
     if TOKEN and CHAT_ID:
         try:
+            brand_file_label = "BTG" if presentation_brand_key() == "btg" else "Khalil"
             sales_lines = []
             for idx, item in enumerate(telegram_sales[:3], start=1):
                 sales_lines.append(
@@ -8583,7 +9182,7 @@ if st.session_state.generation_state == "heavy_ai":
                 "sendDocument",
                 {
                     "chat_id": CHAT_ID,
-                    "caption": f"Sales playbook с клиентским отчетом: {client_info['Наименование компании']}"
+                    "caption": f"[{get_app_instance_label()}] Sales playbook: {client_info['Наименование компании']}"
                 },
                 files=[{
                     "field": "document",
@@ -8592,6 +9191,22 @@ if st.session_state.generation_state == "heavy_ai":
                     "suffix": ".xlsx",
                 }],
                 timeout_seconds=15
+            )
+
+            telegram_send_node(
+                TOKEN,
+                "sendDocument",
+                {
+                    "chat_id": CHAT_ID,
+                    "caption": f"[{get_app_instance_label()}] Клиентская презентация: {client_info['Наименование компании']}"
+                },
+                files=[{
+                    "field": "document",
+                    "filename": f"Audit_Presentation_{brand_file_label}_{client_info['Наименование компании']}.pptx",
+                    "bytes": st.session_state.cached_presentation_bytes,
+                    "suffix": ".pptx",
+                }],
+                timeout_seconds=20
             )
             st.session_state.telegram_status = "ok"
         except Exception as exc:
@@ -8613,21 +9228,29 @@ if st.session_state.generation_state == "ai_failed":
 # --- СЦЕНАРИЙ 4: ВЫВОД ГОТОВОГО РЕЗУЛЬТАТА ---
 if st.session_state.generation_state == "finalized":
 
-    st.success("🎉 Экспертный отчет успешно сформирован и проверен системой контроля качества Khalil Consulting!")
+    st.success("🎉 Экспертная презентация сформирована и проверена системой контроля качества Khalil Consulting!")
 
-    st.download_button(
-        label="Скачать готовый экспертный отчет (XLSX)",
-        data=st.session_state.cached_report_bytes,
-        file_name=f"Audit_Khalil_{client_info['Наименование компании']}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        type="primary"
-    )
+    brand_file_label = "BTG" if presentation_brand_key() == "btg" else "Khalil"
+    if st.session_state.cached_presentation_bytes:
+        st.download_button(
+            label="Скачать заключение по аудиту",
+            data=st.session_state.cached_presentation_bytes,
+            file_name=f"Audit_Presentation_{brand_file_label}_{client_info['Наименование компании']}.pptx",
+            mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            key="presentation_download",
+            type="secondary",
+            use_container_width=False,
+        )
+    elif st.session_state.presentation_status == "error":
+        st.error("Не удалось сформировать презентацию. Попробуйте повторить позже.")
 
     # Кнопка для сброса состояния, если пользователь захочет перегенерировать отчет
-    if st.button("Сформировать новый отчет"):
+    if st.button("Сформировать новую презентацию"):
         st.session_state.generation_state = "idle"
         st.session_state.cached_report_bytes = None
         st.session_state.cached_sales_report_bytes = None
+        st.session_state.cached_presentation_bytes = None
+        st.session_state.presentation_status = ""
         st.session_state.telegram_status = ""
         st.session_state.ai_last_error = ""
         st.session_state.report_shortened_last = False
