@@ -104,7 +104,7 @@ def get_app_secret(name, default=None):
 
 
 APP_INSTANCE_DEFAULT = "Khalil"
-APP_VERSION = "12.18"
+APP_VERSION = "12.20"
 
 
 def get_app_instance_label():
@@ -1253,6 +1253,30 @@ def sanitize_customer_roadmap_text(value):
     text = expand_regulatory_references(value).strip()
     lowered = text.lower()
 
+    if "nac" in lowered or "network access control" in lowered:
+        if any(marker in lowered for marker in ("требован", "оценить", "обслед", "аудит", "выбрать решение")):
+            return (
+                "Описать типы подключений и требования к NAC; согласовать пилотный контур, "
+                "сценарии 802.1X, профилирования и изоляции устройств."
+            )
+        if any(marker in lowered for marker in ("внедр", "развер", "пилот", "настро")):
+            return (
+                "Провести пилот NAC на Wi-Fi и одном проводном сегменте; проверить 802.1X, "
+                "профилирование, контроль соответствия и изоляцию устройств."
+            )
+
+    if "edr" in lowered or "xdr" in lowered:
+        return (
+            "Провести пилот EDR/XDR на согласованной группе конечных точек и серверов; "
+            "проверить покрытие, телеметрию, сценарии реагирования и передачу событий в SIEM."
+        )
+
+    if "soar" in lowered:
+        return (
+            "После стабилизации SIEM выбрать повторяемые сценарии реагирования и провести пилот "
+            "SOAR с контролем времени обработки и доли ручных операций."
+        )
+
     if "dlp" in lowered and any(marker in lowered for marker in ("закупить", "выбрать поставщика")):
         if "пилот" in lowered or "закупить" in lowered:
             return (
@@ -1275,7 +1299,10 @@ def sanitize_customer_roadmap_text(value):
         )
 
     if "pam" in lowered or "привилегирован" in lowered:
-        if any(marker in lowered for marker in ("рабочую группу", "собрать требования", "выбрать пилот")):
+        if any(marker in lowered for marker in (
+            "рабочую группу", "собрать требования", "выбрать пилот", "аудит", "инвентар",
+            "список ролей", "список привилегирован",
+        )):
             return (
                 "Сформировать рабочую группу, инвентаризировать привилегированные доступы ко всем "
                 "критичным системам и выбрать пилотный сценарий PAM."
@@ -1290,6 +1317,10 @@ def sanitize_customer_roadmap_text(value):
                 "Расширить PAM на критичные системы, сетевое оборудование, базы данных и "
                 "административные консоли; передавать события в SIEM."
             )
+        return (
+            "Провести пилот PAM на согласованном критичном контуре; проверить vault, контроль "
+            "сессий, аварийный доступ и передачу событий в SIEM."
+        )
 
     if "скан" in lowered and "уязв" in lowered:
         return (
@@ -1308,7 +1339,7 @@ def sanitize_customer_roadmap_text(value):
         "Cisco ISE", "CyberArk", "Veeam Backup", "Veeam", "Fortinet", "Check Point",
         "Huawei", "IBM", "Splunk", "ManageEngine", "Broadcom", "Forcepoint",
         "OpenVAS", "R-Vision", "R Vision", "Qualys", "Tenable", "Rapid7",
-        "Zabbix", "Prometheus", "Microsoft", "Windows Server",
+        "Zabbix", "Prometheus", "Microsoft", "Windows Server", "Duo",
     }
     try:
         vendor_names.update(load_detailed_vendor_names())
@@ -1325,6 +1356,8 @@ def sanitize_customer_roadmap_text(value):
         flags=re.IGNORECASE,
     )
     text = re.sub(r"\(\s*\)", "", text)
+    text = re.sub(r"\s*\([^)]*без\s+продукт[^)]*\)", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"(?<![\d.])\b1X\b", "802.1X", text, flags=re.IGNORECASE)
     text = re.sub(r"\s{2,}", " ", text)
     text = re.sub(r"\s+([,.;:])", r"\1", text)
     return text.strip(" .,-") + ("." if text.strip(" .,-") else "")
@@ -7756,11 +7789,28 @@ def enforce_audit_fact_policy(item, results, context):
     if key == "dlp" and not is_enabled(results.get("DLP")) and (
         context.get("is_kvoiki") or context.get("has_personal_data")
     ):
-        normalized["level"] = "HIGH"
-        normalized["recommendation"] = (
-            "Определить категории данных, каналы контроля и критерии успеха; провести ограниченный "
-            "пилот DLP; по результатам пилота выбрать архитектуру и масштабировать подтвержденные политики."
-        )
+        normalized.update({
+            "level": "HIGH",
+            "risk": "Отсутствие DLP повышает риск утечки персональных данных",
+            "description": (
+                "В анкете DLP не указан, при этом организация обрабатывает персональные данные. "
+                "Контроль каналов передачи и правил обращения с чувствительными данными требует подтверждения."
+            ),
+            "impact": (
+                "Неконтролируемая передача данных через почту, веб, облачные сервисы или съемные носители "
+                "может привести к утечке и регуляторным последствиям."
+            ),
+            "recommendation": (
+                "Определить категории данных, каналы контроля и критерии успеха; провести ограниченный "
+                "пилот DLP; по результатам выбрать архитектуру и масштабировать подтвержденные политики."
+            ),
+            "evidence": [
+                f"DLP в анкете: {results.get('DLP', 'Нет')}",
+                "Обработка персональных данных: указана",
+            ],
+            "success_metric": "Политики DLP контролируют согласованные каналы передачи персональных данных",
+            "vendors": ["DLP"],
+        })
 
     if key == "backup" and context.get("has_backup"):
         normalized.update({
@@ -8385,6 +8435,7 @@ def presentation_evidence_for_key(semantic_key, results, context, item):
         "network_performance": f"Основной канал: {results.get('Интернет канал (осн)', 'не указан')}; резервный: {results.get('Резервный канал', 'Нет')}; маршрутизация: {results.get('Маршрутизация', 'Нет')}.",
         "segmentation": "В анкете не приведены схема VLAN/VRF, ACL и матрица межсегментных потоков; OSPF сам по себе не подтверждает сегментацию.",
         "nac": f"В анкете NAC: {results.get('NAC', 'Нет')}. Требуется подтвердить контроль допуска проводных, Wi-Fi и неизвестных устройств.",
+        "dlp": f"В анкете DLP: {results.get('DLP', 'Нет')}. Обработка персональных данных указана; контролируемые каналы передачи не подтверждены.",
         "itam": "В анкете не подтверждены единый реестр ПО, лицензий, владельцев активов и сроки поддержки.",
         "change_management": "В анкете не подтверждены единый процесс согласования изменений, тестирования и плана отката.",
         "it_monitoring": "В анкете не подтверждены единые метрики доступности, производительности и емкости для критичных сервисов.",
@@ -8478,6 +8529,11 @@ def presentation_presales_profile(item):
             "impact": "Без централизованного профилирования и политики допуска неизвестные или несоответствующие требованиям устройства могут попасть в корпоративную сеть.",
             "action": "Провести пилот NAC на Wi-Fi и одном проводном сегменте, настроить профилирование, проверку соответствия и изоляцию неизвестных устройств.",
         },
+        "dlp": {
+            "title": "Отсутствие DLP повышает риск утечки персональных данных",
+            "impact": "Неконтролируемая передача данных может привести к утечке, регуляторным последствиям и репутационному ущербу.",
+            "action": "Определить категории данных и каналы контроля, провести ограниченный пилот DLP и масштабировать подтвержденные политики.",
+        },
         "iam": {
             "title": "Жизненный цикл учетных записей не автоматизирован",
             "impact": "Задержка отзыва доступа и накопление избыточных прав повышают вероятность несанкционированного доступа к бизнес-системам.",
@@ -8514,6 +8570,7 @@ def presentation_success_metric(semantic_key):
         "web_waf": "Все публичные приложения защищены и проходят регулярную проверку",
         "pam": "Привилегированные учетные записи учтены и контролируются",
         "nac": "100% подключений идентифицируются; неизвестные устройства изолируются",
+        "dlp": "Политики DLP контролируют согласованные каналы передачи персональных данных",
         "segmentation": "Матрица VLAN/ACL подтверждена тестом межсегментного доступа",
         "mail": "Защитные политики применены ко всем почтовым ящикам",
         "appsec": "Критичные релизы проходят обязательные проверки безопасности",
@@ -8797,47 +8854,73 @@ def build_audit_presentation_replacements(c_info, results, final_score, it_matur
         "31-60": [],
         "61-90": [],
     }
+    def staged_roadmap_action(entry, phase):
+        key = entry["key"]
+        title = entry["title"].lower()
+        specific = {
+            "pam": {
+                "0-30": "Инвентаризировать привилегированные доступы, определить критичные системы и границы пилота PAM.",
+                "31-60": "Провести пилот PAM; проверить vault, контроль сессий, аварийный доступ и передачу событий в SIEM.",
+                "61-90": "Расширить PAM на подтвержденный критичный контур и ввести регулярный пересмотр привилегий.",
+            },
+            "nac": {
+                "0-30": "Описать типы подключений, требования к NAC и пилотный контур для проводной и беспроводной сети.",
+                "31-60": "Провести пилот NAC; проверить 802.1X, профилирование, контроль соответствия и изоляцию устройств.",
+                "61-90": "Расширить подтвержденные политики NAC и включить контроль качества допуска устройств.",
+            },
+            "iam": {
+                "0-30": "Описать прием, перевод и увольнение, владельцев ролей и требования к интеграциям IAM.",
+                "31-60": "Провести PoC IAM на выбранных подразделениях и критичных бизнес-системах.",
+                "61-90": "Масштабировать подтвержденные процессы IAM и ввести контроль SLA создания и отзыва прав.",
+            },
+            "dlp": {
+                "0-30": "Определить категории персональных данных, каналы контроля и измеримые критерии пилота DLP.",
+                "31-60": "Провести ограниченный пилот DLP на согласованных каналах и скорректировать политики по результатам.",
+                "61-90": "Масштабировать подтвержденные политики DLP и включить регулярный контроль инцидентов и исключений.",
+            },
+        }
+        if key in specific:
+            return specific[key][phase]
+        if phase == "0-30":
+            return f"Подтвердить текущее состояние по теме «{title}», согласовать требования, владельца и границы пилота."
+        if phase == "31-60":
+            return sanitize_customer_roadmap_text(entry["action"])
+        return f"Масштабировать подтвержденную меру «{title}» и включить регулярный контроль результата."
+
+    recommendation_by_key = {
+        entry["key"]: entry for entry in recommendation_items if entry.get("key")
+    }
+    roadmap_keys_by_phase = {phase: set() for phase in roadmap_by_phase}
     for item in roadmap_items:
         phase = str(item.get("phase", ""))
         phase_key = next((key for key in roadmap_by_phase if key in phase), None)
         if not phase_key:
             continue
-        action = presentation_action_text(
-            sanitize_customer_roadmap_text(item.get("action") or item.get("recommendation")),
-            120,
-        )
-        result = presentation_action_text(
-            sanitize_customer_roadmap_text(item.get("result") or "Результат подтверждается измеримым критерием."),
-            90,
-        )
-        if action not in [entry["action"] for entry in roadmap_by_phase[phase_key]]:
-            roadmap_by_phase[phase_key].append({"action": action, "result": result})
-
-    roadmap_phase_by_key = {
-        "mfa": "0-30",
-        "iam": "31-60",
-        "legacy_os": "0-30",
-        "change_management": "31-60",
-        "network_performance": "31-60",
-        "endpoint_detection": "31-60",
-        "web_waf": "31-60",
-        "it_monitoring": "61-90",
-        "siem_soc": "61-90",
-        "backup": "61-90",
-        "patch": "61-90",
-        "pam": "31-60",
-        "nac": "61-90",
-    }
-    for entry in recommendation_items:
-        phase = roadmap_phase_by_key.get(entry["key"])
-        if not phase or len(roadmap_by_phase[phase]) >= 2:
+        raw_action = sanitize_customer_roadmap_text(item.get("action") or item.get("recommendation"))
+        roadmap_key = risk_semantic_key({"risk": raw_action, "recommendation": raw_action})
+        entry = recommendation_by_key.get(roadmap_key)
+        if not entry or roadmap_key in roadmap_keys_by_phase[phase_key]:
             continue
-        action = presentation_action_text(sanitize_customer_roadmap_text(entry["action"]), 120)
-        if action not in [item["action"] for item in roadmap_by_phase[phase]]:
+        roadmap_by_phase[phase_key].append({
+            "action": presentation_action_text(staged_roadmap_action(entry, phase_key), 120),
+            "result": presentation_action_text(entry["metric"], 90),
+            "key": roadmap_key,
+        })
+        roadmap_keys_by_phase[phase_key].add(roadmap_key)
+
+    for phase in ("0-30", "31-60", "61-90"):
+        for entry in recommendation_items:
+            if len(roadmap_by_phase[phase]) >= 2:
+                break
+            if entry["key"] in roadmap_keys_by_phase[phase]:
+                continue
+            action = presentation_action_text(staged_roadmap_action(entry, phase), 120)
             roadmap_by_phase[phase].append({
                 "action": action,
                 "result": presentation_action_text(entry["metric"], 90),
+                "key": entry["key"],
             })
+            roadmap_keys_by_phase[phase].add(entry["key"])
 
     enabled_controls, _ = security_control_snapshot(results)
     strengths = [presentation_text(item, 105) for item in enabled_controls[:4]]
@@ -10912,7 +10995,7 @@ if st.session_state.generation_state == "idle":
             time.sleep(random.uniform(0.7, 1.4))
 
 
-        
+
         # При клике мы просто меняем статус в памяти на "подготовка" и мгновенно перезапускаем страницу
         st.session_state.generation_state = "preparing"
         st.rerun()
@@ -10927,10 +11010,10 @@ if st.session_state.generation_state == "preparing":
     # Имитируем лог-систему, как вы просили
     st.info(f"⚙️ `[СИСТЕМА]`: Инициализация аналитического ядра Khalil Consulting {APP_VERSION}...")
     st.success("⚙️ `[МАТРИЦА]`: Агрегация параметров ИТ-инфраструктуры успешно завершена.")
-    
+
     st.markdown("---")
     st.markdown("#### Полезные факты и рекомендации по ИБ:")
-    
+
     # Выводим на экран массив фактов в красивом поле, который пользователь будет читать все 3 минуты
     st.markdown("""
     <div class="facts-panel">
@@ -10941,10 +11024,10 @@ if st.session_state.generation_state == "preparing":
         <p><strong>Человеческий фактор:</strong> значительная часть успешных кибератак начинается с фишингового письма. Регулярное обучение снижает этот риск.</p>
     </div>
     """, unsafe_allow_html=True)
-    
+
     # Делаем маленькую паузу в 1.5 секунды, чтобы Streamlit успел железно отправить этот интерфейс в браузер клиента
     time.sleep(1.5)
-    
+
     # Меняем статус на "Запуск тяжелого ИИ" и перезапускаем страницу.
     # Теперь этот красивый экран останется висеть в браузере, пока ИИ думает!
     st.session_state.generation_state = "heavy_ai"
