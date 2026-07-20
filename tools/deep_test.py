@@ -260,6 +260,47 @@ def test_customer_report_separates_solutions_from_manufacturers() -> None:
     legacy_vendors = helpers["portfolio_manufacturers_for_report_item"]({"risk": "Устаревшие Windows 7 на рабочих станциях"})
     assert_true(legacy_vendors == "Microsoft", f"Legacy OS slide should recommend Microsoft only, got: {legacy_vendors}")
 
+    wan_item = {
+        "semantic_key": "network_performance",
+        "risk": "Низкая отказоустойчивость основного канала связи",
+        "description": "Основной канал 1000 Mbit/s, резервный канал 50 Mbit/s.",
+        "recommendation": "Увеличить пропускную способность резервного канала и проверить failover.",
+        "vendors": ["Veeam", "Commvault"],
+    }
+    assert_true(
+        helpers["risk_semantic_key"](wan_item) == "network_performance",
+        "Explicit canonical WAN type must not be reclassified as Backup",
+    )
+    wan_solution = helpers["solution_categories_for_report_item"](wan_item)
+    wan_vendors = helpers["portfolio_manufacturers_for_report_item"](wan_item)
+    assert_true("WAN" in wan_solution and "Backup" not in wan_solution, f"Unexpected WAN solution: {wan_solution}")
+    assert_true(
+        "Cisco" in wan_vendors or "Fortinet" in wan_vendors or "Huawei" in wan_vendors,
+        f"Network manufacturers are missing for WAN resilience: {wan_vendors}",
+    )
+    assert_true(
+        "Veeam" not in wan_vendors and "Commvault" not in wan_vendors,
+        f"Backup manufacturers leaked into WAN resilience: {wan_vendors}",
+    )
+
+    northstar_titles = {
+        "Недостаточный запас вычислительных ресурсов виртуальной среды": "virtualization",
+        "Отсутствие утвержденных RTO/RPO и плана аварийного восстановления": "dr",
+        "Недостаточная емкость и управляемость Wi-Fi сети": "wifi_capacity",
+        "Низкая отказоустойчивость основного канала связи": "network_performance",
+        "Риск исчерпания емкости и недостаточная отказоустойчивость СХД": "storage",
+        "Отсутствие формализованного процесса управления изменениями": "change_management",
+        "Отсутствие единой системы мониторинга ИТ-сервисов": "it_monitoring",
+    }
+    mapped_keys = {
+        helpers["risk_semantic_key"]({"risk": title})
+        for title in northstar_titles
+    }
+    assert_true(len(mapped_keys) == 7, f"Northstar findings collapsed into duplicate topics: {mapped_keys}")
+    for title, expected_key in northstar_titles.items():
+        actual_key = helpers["risk_semantic_key"]({"risk": title})
+        assert_true(actual_key == expected_key, f"{title}: expected {expected_key}, got {actual_key}")
+
 
 def test_segmentation_never_maps_to_dlp() -> None:
     helpers = load_portfolio_helpers()
@@ -276,6 +317,37 @@ def test_segmentation_never_maps_to_dlp() -> None:
     assert_true(key == "segmentation", f"Segmentation must win over generic confidentiality text, got: {key}")
     assert_true("VLAN" in solution and "DLP" not in solution, f"Segmentation solution is incorrect: {solution}")
     assert_true("Zecurion" not in manufacturers and "Forcepoint" not in manufacturers, f"DLP vendors leaked into segmentation: {manufacturers}")
+
+
+def test_wifi_and_dr_semantics_are_stable() -> None:
+    helpers = load_portfolio_helpers()
+    wifi_item = {
+        "risk": "Перегрузка Wi‑Fi без централизованного управления",
+        "description": "12 точек доступа обслуживают 500–600 одновременных подключений.",
+        "recommendation": "Провести радиообследование и пилот WLAN-контроллера.",
+        "vendors": [],
+    }
+    assert_true(
+        helpers["risk_semantic_key"](wifi_item) == "wifi_capacity",
+        "Non-breaking Wi-Fi hyphen must not turn a WLAN gap into IT monitoring",
+    )
+    wifi_solution = helpers["solution_categories_for_report_item"](wifi_item)
+    wifi_vendors = helpers["portfolio_manufacturers_for_report_item"](wifi_item)
+    assert_true("WLAN" in wifi_solution and "Wi-Fi" in wifi_solution, f"Incorrect Wi-Fi solution: {wifi_solution}")
+    assert_true(
+        "Cisco" in wifi_vendors and "Huawei" in wifi_vendors,
+        f"Portfolio Wi-Fi manufacturers are missing: {wifi_vendors}",
+    )
+
+    dr_item = {
+        "risk": "Не описан план аварийного восстановления критичных ИТ-сервисов",
+        "description": "Нужно восстановить ERP, CRM и почту в пределах RTO/RPO.",
+        "recommendation": "Провести DR-учение и оформить runbook.",
+    }
+    assert_true(
+        helpers["risk_semantic_key"](dr_item) == "dr",
+        "A DR recommendation mentioning mail must not map to Mail Security",
+    )
 
 
 def test_ospf_is_not_segmentation_evidence() -> None:
@@ -408,6 +480,7 @@ def test_presentation_actions_are_complete_and_deduplicated() -> None:
     for name in (
         "presentation_text",
         "presentation_action_text",
+        "presentation_title_text",
         "risk_level_label",
         "risk_semantic_key",
         "presentation_recommendation_key",
@@ -471,6 +544,16 @@ def test_presentation_actions_are_complete_and_deduplicated() -> None:
         "Known NAC findings must use the fact-safe presales title and impact",
     )
     assert_true(len(nac_risk["title"]) <= 58, "Risk-card title can overlap the impact block")
+    complete_title = namespace["presentation_risk_entry"]({
+        "level": "HIGH",
+        "risk": "Не описан план аварийного восстановления критичных сервисов",
+        "impact": "Восстановление может не уложиться в согласованное время.",
+        "recommendation": "Определить RTO/RPO и провести учение.",
+    })
+    assert_true(
+        complete_title["title"] == "Тестирование восстановления и RTO/RPO не формализованы",
+        f"Risk title was cut mid-sentence: {complete_title['title']}",
+    )
     dlp_risk = namespace["presentation_risk_entry"]({
         "_source": "Groq",
         "level": "HIGH",
@@ -484,9 +567,123 @@ def test_presentation_actions_are_complete_and_deduplicated() -> None:
     )
 
 
+def test_canonical_roadmap_uses_only_confirmed_findings() -> None:
+    module_text = APP.read_text(encoding="utf-8")
+    namespace = {"re": re}
+    for name in (
+        "presentation_text",
+        "presentation_action_text",
+        "risk_semantic_key",
+        "presentation_success_metric",
+        "canonical_roadmap_action",
+        "build_canonical_report_roadmap",
+    ):
+        exec(extract_function_source(module_text, name), namespace)
+
+    findings = [
+        {
+            "level": "Высокий",
+            "risk": "Недостаточный ресурсный запас виртуализации и отсутствие планирования емкости",
+            "description": "Средняя загрузка памяти достигает 88-92%.",
+            "impact": "Снижается запас на отказ одного хоста.",
+            "recommendation": "Провести capacity-анализ и подготовить план расширения.",
+            "area": "ИТ",
+            "semantic_key": "virtualization",
+        },
+        {
+            "level": "Высокий",
+            "risk": "Неформализованное управление изменениями",
+            "description": "Изменения согласуются в чатах.",
+            "impact": "Повышается вероятность простоев.",
+            "recommendation": "Ввести единый процесс изменений и планы отката.",
+            "area": "ИТ",
+            "semantic_key": "change_management",
+        },
+        {
+            "level": "Средний",
+            "risk": "Ограниченная емкость и отсутствие централизованного управления Wi-Fi",
+            "description": "12 автономных точек обслуживают до 600 устройств.",
+            "impact": "Возможны перегрузка и нестабильный роуминг.",
+            "recommendation": "Провести радиообследование и пилот WLAN-контроллера.",
+            "area": "ИТ",
+            "semantic_key": "wifi_capacity",
+        },
+        {
+            "level": "Средний",
+            "risk": "Недостаточная отказоустойчивость резервного канала связи",
+            "description": "Основной канал 1000 Mbit/s, резервный 50 Mbit/s.",
+            "impact": "При отказе основного канала критичные сервисы могут деградировать.",
+            "recommendation": "Увеличить резервную полосу и проверить переключение.",
+            "area": "ИТ",
+            "semantic_key": "network_performance",
+        },
+        {
+            "level": "Средний",
+            "risk": "Не формализовано тестирование восстановления и RTO/RPO",
+            "description": "Veeam используется, но регулярные тесты не подтверждены.",
+            "impact": "Фактическое время восстановления неизвестно.",
+            "recommendation": "Провести тест восстановления и утвердить DR-runbook.",
+            "area": "ИТ/ИБ",
+            "semantic_key": "dr",
+        },
+    ]
+    roadmap = namespace["build_canonical_report_roadmap"](findings)
+    keys = [item["semantic_key"] for item in roadmap]
+    actions = " ".join(item["action"] for item in roadmap).lower()
+    assert_true(len(roadmap) == 6, f"Expected six coherent timeline positions, got {len(roadmap)}")
+    assert_true("legacy_os" not in keys and "устарев" not in actions, "Roadmap invented legacy operating systems")
+    wan = next(item for item in roadmap if item["semantic_key"] == "network_performance")
+    assert_true("wan" in wan["action"].lower() or "канал" in wan["action"].lower(), "WAN action was remapped")
+    assert_true("veeam" not in wan["action"].lower() and "backup" not in wan["action"].lower(), "Backup leaked into WAN roadmap")
+    for phase in ("0-30 дней", "31-60 дней", "61-90 дней"):
+        assert_true(sum(item["phase"] == phase for item in roadmap) == 2, f"Roadmap phase is incomplete: {phase}")
+
+
+def test_confirmed_wan_and_monitoring_survive_ai_omission() -> None:
+    module_text = APP.read_text(encoding="utf-8")
+    namespace = {
+        "re": re,
+        "IT_GAP_LABELS": {
+            "wifi_capacity": "Wi-Fi",
+            "network_performance": "WAN",
+            "virtualization": "Виртуализация",
+            "storage": "СХД",
+            "it_monitoring": "ИТ-мониторинг",
+            "itam": "CMDB",
+            "change_management": "Изменения",
+            "dr": "DR",
+        },
+    }
+    for name in ("confirmed_it_gap_topics", "build_confirmed_it_gap_risks"):
+        exec(extract_function_source(module_text, name), namespace)
+
+    results = {
+        "_user_count": 650,
+        "WiFi Точки": 12,
+        "WiFi Контроллер": "Нет",
+        "_main_speed": 1000,
+        "_back_speed": 50,
+        "1.2. Примечание": (
+            "Переключение на резервный канал тестируется нерегулярно. "
+            "Мониторинг доступности ведется отдельными утилитами без единой панели и SLA."
+        ),
+        "1.3. Примечание": (
+            "Capacity planning не формализован. Инфраструктурный мониторинг серверов, "
+            "виртуализации, СХД и каналов не объединен в единый контур."
+        ),
+    }
+    findings = namespace["build_confirmed_it_gap_risks"](results, {})
+    by_key = {item["semantic_key"]: item for item in findings}
+    assert_true("network_performance" in by_key, "Confirmed weak backup channel was omitted")
+    assert_true("it_monitoring" in by_key, "Confirmed fragmented IT monitoring was omitted")
+    wan = by_key["network_performance"]
+    assert_true("1000" in wan["description"] and "50" in wan["description"], "WAN evidence lost questionnaire speeds")
+    assert_true(wan["level"] == "HIGH", "A 5% backup channel with irregular failover should be high priority")
+
+
 def test_it_maturity_measures_controls_not_infrastructure_size() -> None:
     module_text = APP.read_text(encoding="utf-8")
-    namespace: dict[str, object] = {}
+    namespace: dict[str, object] = {"re": re}
     exec(extract_function_source(module_text, "calculate_it_maturity_score"), namespace)
     score = namespace["calculate_it_maturity_score"](
         420, ["Windows 10", "Windows 11"], 420,
@@ -495,7 +692,106 @@ def test_it_maturity_measures_controls_not_infrastructure_size() -> None:
         True, ["HDD", "SSD"], 24, 16, ["RAID 10"],
         True, True, True, 12, ["Python"], True,
     )
-    assert_true(score <= 95, f"Questionnaire-only IT maturity cannot be 100%, got {score}")
+    assert_true(score <= 90, f"Questionnaire-only IT maturity cannot imply full optimization, got {score}")
+
+    degraded_score = namespace["calculate_it_maturity_score"](
+        650, ["Windows 11", "macOS"], 650,
+        True, 1000, 50, ["OSPF"], 12, "Check Point",
+        True, 8, 60, ["VMware"], "Veeam",
+        True, ["HDD", "SSD"], 36, 12, ["RAID 6", "RAID 10"],
+        True, True, False, 0, [], False,
+        wifi_enabled=True,
+        wifi_ctrl_enabled=False,
+        operational_notes=[
+            "CMDB отсутствует; изменения согласуются в чатах.",
+            "Wi-Fi без единой панели; capacity planning не формализован.",
+            "RTO и RPO не согласованы, восстановление тестируется нерегулярно.",
+            "СХД заполнена на 84%.",
+        ],
+    )
+    assert_true(
+        degraded_score < 60,
+        f"Confirmed operational IT gaps must materially reduce maturity, got {degraded_score}",
+    )
+
+
+def test_security_maturity_is_normalized_and_evidence_capped() -> None:
+    module_text = APP.read_text(encoding="utf-8")
+    namespace: dict[str, object] = {}
+    exec(extract_function_source(module_text, "calculate_weighted_security_score"), namespace)
+    controls = [(True, f"Vendor {index}", weight) for index, weight in enumerate((8, 12, 8, 10, 6, 5), start=1)]
+    score = namespace["calculate_weighted_security_score"](True, controls)
+    assert_true(score == 92, f"Self-reported security maturity must be capped at 92%, got {score}")
+
+    partial = [(True, "Vendor", 10), (False, "", 10), (False, "", 10)]
+    partial_score = namespace["calculate_weighted_security_score"](True, partial)
+    assert_true(partial_score == 31, f"Security score must be normalized by available weight, got {partial_score}")
+
+
+def test_confirmed_it_gaps_must_be_covered_by_ai() -> None:
+    module_text = APP.read_text(encoding="utf-8")
+    labels = {
+        key: key
+        for key in (
+            "wifi_capacity", "network_performance", "virtualization", "storage", "it_monitoring",
+            "itam", "change_management", "dr",
+        )
+    }
+    namespace = {
+        "re": re,
+        "IT_GAP_LABELS": labels,
+    }
+    exec(extract_function_source(module_text, "confirmed_it_gap_topics"), namespace)
+    results = {
+        "_user_count": 650,
+        "WiFi Точки": 12,
+        "_main_speed": "1000 Mbit/s",
+        "_back_speed": "50 Mbit/s",
+        "WiFi Контроллер": "Нет",
+        "1.1. Примечание": "Единый CMDB отсутствует.",
+        "1.2. Примечание": "Wi-Fi перегружен, резервный канал слабый, мониторинг без единой панели.",
+        "1.3. Примечание": "Capacity planning не формализован; RTO/RPO не согласованы, восстановление тестируется нерегулярно.",
+        "1.4. Примечание": "СХД заполнена на 84%, прогноз исчерпания не утвержден.",
+        "1.5. Примечание": "Изменения согласуются в чатах, календарь изменений отсутствует.",
+    }
+    expected = namespace["confirmed_it_gap_topics"](results)
+    assert_true(
+        set(expected) == set(labels),
+        f"Not all explicit IT gaps were detected: {sorted(expected)}",
+    )
+
+    namespace["risk_semantic_key"] = None
+    exec(extract_function_source(module_text, "risk_semantic_key"), namespace)
+    exec(extract_function_source(module_text, "ai_it_gap_coverage"), namespace)
+    ai_items = [
+        {"risk": "Перегруженная Wi-Fi сеть без централизованного WLAN-контроллера"},
+        {"risk": "Слабый резервный канал не обеспечивает отказоустойчивость WAN"},
+        {"risk": "Capacity planning виртуализации не формализован"},
+        {"risk": "СХД требует контроля емкости и производительности"},
+        {"risk": "Эксплуатационный мониторинг работает без единой панели"},
+        {"risk": "CMDB и учет активов требуют централизации"},
+    ]
+    matched, missing = namespace["ai_it_gap_coverage"](ai_items, expected)
+    assert_true(len(matched) == 6, f"Expected six covered IT gaps, got {matched}")
+    assert_true(set(missing) == {"change_management", "dr"}, f"Unexpected missing IT gaps: {missing}")
+
+    channel_only_matched, channel_only_missing = namespace["ai_it_gap_coverage"](
+        [{"risk": "Резервный канал требует увеличения пропускной способности и проверки failover"}],
+        expected,
+    )
+    assert_true("network_performance" in channel_only_matched, "WAN recommendation must cover network resilience")
+    assert_true("wifi_capacity" in channel_only_missing, "WAN recommendation must not hide a confirmed Wi-Fi gap")
+
+    combined_item = [{
+        "risk": "CMDB и управление изменениями требуют формализации",
+        "description": "Учет активов и планы отката не связаны.",
+        "recommendation": "Настроить CMDB, согласование изменений и контроль восстановления по RTO/RPO.",
+    }]
+    combined_matched, _ = namespace["ai_it_gap_coverage"](combined_item, expected)
+    assert_true(
+        {"itam", "change_management", "dr"}.issubset(combined_matched),
+        f"One complete AI recommendation must be able to cover related gaps: {combined_matched}",
+    )
 
 
 def test_ai_presentation_recommendation_path() -> None:
@@ -505,6 +801,7 @@ def test_ai_presentation_recommendation_path() -> None:
         "presentation_presales_profile": lambda item: ("nac", {}),
         "presentation_text": lambda value, limit=None: str(value),
         "presentation_action_text": lambda value, limit=None: str(value),
+        "presentation_title_text": lambda value, limit=None: str(value),
         "solution_categories_for_report_item": lambda item: "NAC",
         "portfolio_manufacturers_for_report_item": lambda item: "Fortinet",
         "split_portfolio_list": lambda value: [part.strip() for part in str(value).split(",") if part.strip()],
@@ -542,6 +839,21 @@ def test_presentation_evidence_and_maturity_palette() -> None:
     assert_true("компрометац" not in evidence.lower(), f"ITAM evidence is semantically wrong: {evidence}")
     assert_true("реестр" in evidence.lower(), f"ITAM evidence must state the actual data gap: {evidence}")
 
+    wifi_evidence = namespace["presentation_evidence_for_key"](
+        "wifi_capacity",
+        {
+            "_user_count": 650,
+            "Wi-Fi Точки доступа": 12,
+            "Wi-Fi Контроллер": "Нет",
+        },
+        {"users": 650, "servers": 22},
+        {},
+    )
+    assert_true(
+        "650" in wifi_evidence and "12" in wifi_evidence and "Нет" in wifi_evidence,
+        f"Wi-Fi evidence lost questionnaire values: {wifi_evidence}",
+    )
+
     palette = namespace["presentation_maturity_style"]
     assert_true(palette(20)[0] == "#D92D20", "Low maturity must be red")
     assert_true(palette(55)[0] == "#F4B400", "Mid maturity must be yellow")
@@ -559,14 +871,19 @@ def main() -> None:
         test_customer_report_context,
         test_customer_report_separates_solutions_from_manufacturers,
         test_segmentation_never_maps_to_dlp,
+        test_wifi_and_dr_semantics_are_stable,
         test_ospf_is_not_segmentation_evidence,
         test_customer_and_sales_language_avoids_size_labels,
         test_sales_sheet_navigation_layout,
         test_presentation_template_rendering,
         test_presentation_text_is_self_contained,
         test_presentation_actions_are_complete_and_deduplicated,
+        test_canonical_roadmap_uses_only_confirmed_findings,
+        test_confirmed_wan_and_monitoring_survive_ai_omission,
         test_ai_presentation_recommendation_path,
         test_it_maturity_measures_controls_not_infrastructure_size,
+        test_security_maturity_is_normalized_and_evidence_capped,
+        test_confirmed_it_gaps_must_be_covered_by_ai,
         test_presentation_evidence_and_maturity_palette,
     ]
     for test in tests:

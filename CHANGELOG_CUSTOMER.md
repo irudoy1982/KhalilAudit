@@ -3,11 +3,15 @@
 This changelog is intended for production release notes that can be shown to customers.
 Keep this file focused only on customer-visible questionnaire and report changes.
 
-## v12
+## v12.30
 
-Status: in development in Test.
+Status: stable production release.
 
 Planned customer-visible improvement:
+- Preserved questionnaire-confirmed WAN resilience and IT-monitoring findings even when an analysis response omits them.
+- Reordered the 90-day plan around immediate risk reduction, followed by pilots and controlled rollout.
+- Unified the detailed conclusion and presentation roadmap around the same confirmed findings, with complete wording and correctly ordered assessment, pilot, and rollout steps.
+- Made the backup internet channel explicitly default to “Нет” until the user confirms one exists.
 - Added a concise branded PowerPoint presentation with the audit summary, infrastructure profile, key risks, IT and security recommendations, 90-day roadmap, and management decisions.
 - Added separate IT and information security maturity indicators to the presentation cover.
 - Added solution classes and relevant manufacturers to presentation recommendations.
@@ -25,6 +29,10 @@ Planned customer-visible improvement:
 - Polished the final audit conclusion action for a clearer, more focused download.
 - Centered the final download action and improved its responsive behavior.
 - Centered and refined the presentation generation action so the primary next step is clear and visually consistent.
+- Refined IT and information security maturity estimates so operational gaps, resilience, capacity, and evidence quality affect the displayed score.
+- Strengthened report completeness so explicitly confirmed IT gaps are carried into the recommendations and 90-day plan.
+- Added separate Wi-Fi capacity and centralized-management analysis, and preserved the complete fact-checked audit findings when building the management presentation.
+- Improved network recommendations so Wi-Fi capacity and WAN resilience remain separate, include relevant portfolio manufacturers, and appear as distinct actions in the 90-day plan.
 - Added sector-aware Kazakhstan regulatory context and clearer separation between legal obligations and recommended standards.
 - Expanded the sector list with banking, insurance, healthcare, public and quasi-public sectors, critical infrastructure, telecom, utilities, transport, and industrial environments.
 - Rebuilt the presentation as a 13-slide decision narrative with confirmed strengths, a consistent severity palette, regulatory context, evidence-based recommendations, and measurable outcomes.
@@ -44,6 +52,9 @@ Planned customer-visible improvement:
 - Kept technical audit depth consistent across industries by recovering confirmed recommendations from the complete analysis and roadmap, not only one response section.
 - Expanded concise technology findings into clear customer-facing risk titles without weakening questionnaire fact checks.
 - Improved recommendation consistency so network admission, identity lifecycle, and privileged access are described as separate, evidence-based initiatives.
+- Improved the executive summary, preserved complete risk wording, and made sparse 90-day plans continue the actual confirmed priorities instead of repeating generic text.
+- Strengthened WAN resilience detection when questionnaire speeds include units and improved Wi-Fi evidence shown in recommendations.
+- Unified the presentation and detailed conclusion around one verified finding set so solution classes, manufacturers, evidence, and priorities stay consistent across both formats.
 - Refined presentation risk cards to prevent long titles from overlapping impact text.
 - Fixed presentation generation for recommendations produced by the expert analysis service.
 - Aligned the 90-day plan with confirmed recommendations, removed manufacturer names, and clarified assessment, pilot, and rollout stages.

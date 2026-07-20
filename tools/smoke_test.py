@@ -45,7 +45,7 @@ def check_version() -> None:
     text = read_text(APP)
     match = re.search(r'APP_VERSION\s*=\s*"([^"]+)"', text)
     assert_true(match is not None, "APP_VERSION is missing")
-    assert_true(match.group(1) == "12.20", f"Unexpected APP_VERSION: {match.group(1)}")
+    assert_true(match.group(1) == "12.30", f"Unexpected APP_VERSION: {match.group(1)}")
 
 
 def check_customer_changelog() -> None:
@@ -117,6 +117,14 @@ def check_selectbox_contract() -> None:
     )
     assert_true("net_types = NETWORK_TYPE_OPTIONS" in text, "Network selectboxes do not use the shared contract")
     assert_true("country_codes = COUNTRY_CODE_OPTIONS" in text, "Country selectbox does not use the shared contract")
+    assert_true(
+        'back_net_kwargs["index"] = net_types.index("Нет")' in text,
+        "Backup channel must default explicitly to Нет",
+    )
+    assert_true(
+        'back_speed = 0 if back_type == "Нет" else entered_back_speed' in text,
+        "Disabled backup channel must not retain a positive speed",
+    )
 
     normalizer = next(
         node
@@ -184,6 +192,7 @@ def check_static_hooks() -> None:
     text = read_text(APP)
     assert_true("def build_ai_first_sales_opportunities" in text, "AI-first sales helper is missing")
     assert_true("last_report_risk_sources" in text and '"vendors": item.get("vendors", [])' in text, "Risk sources do not preserve vendors")
+    assert_true('"semantic_key": risk_semantic_key(item)' in text, "Canonical findings do not preserve semantic type")
     assert_true('"area": item.get("_ai_area", "ИТ/ИБ")' in text, "Risk sources do not preserve IT/IB area")
     assert_true("build_ai_first_sales_opportunities(risk_sources, results, context)" in text, "Sales playbook does not use AI-first opportunities")
     assert_true("ensure_sales_playbook_priorities" in text, "Expert sales prioritization is missing")
@@ -210,14 +219,55 @@ def check_static_hooks() -> None:
     assert_true('min_items=1' in text and 'min_security_items=0' in text, "Groq quality gate must accept any confirmed recommendation count")
     assert_true("explicit_no_findings" in text, "A valid zero-recommendation AI result must be accepted")
     assert_true("if prepared_payload is not None:" in text, "Empty successful AI results must not be mistaken for failures")
-    assert_true('"executive_summary": 2' in text and '"roadmap": 6' in text, "AI presentation narrative quality gate is missing")
-    assert_true('if str(item.get("source", "")).strip().lower() == "ии"' in text, "Customer presentation must use AI-authored risks only")
+    assert_true('"executive_summary": 2' in text and '"roadmap": 6' in text, "AI presentation narrative completeness check is missing")
+    assert_true("часть презентационного материала будет дополнена" in text, "Partial AI narrative must preserve useful recommendations")
+    assert_true("call_groq_with_rate_limit_retry(focus_it=True)" in text, "Fact-safe IT-focused Groq retry is missing")
+    assert_true("confirmed_it_gap_topics(results)" in text, "Confirmed IT-gap detector is missing")
+    assert_true("ai_it_gap_coverage(" in text, "AI IT-gap coverage gate is missing")
+    assert_true(
+        '("wifi_capacity", "network_performance")' in text,
+        "Confirmed Wi-Fi and WAN resilience gaps must both be mandatory",
+    )
+    assert_true("gemini_quality_attempts" in text, "Gemini must exhaust bounded quality attempts before Groq")
+    assert_true("minimal_prompt = f\"\"\"" in text, "Gemini compact retry prompt is missing")
+    assert_true(
+        text.count("{confirmed_it_gaps_text}") >= 3,
+        "Every Gemini retry format must retain confirmed IT gaps",
+    )
+    assert_true("stop_gemini = True" not in text, "Gemini must not be abandoned after its first incomplete response")
+    assert_true("minimum_ai_items" in text, "Gemini quality threshold must adapt to confirmed gaps")
+    assert_true("call_groq_with_rate_limit_retry" in text, "Groq rate-limit retry is missing")
+    assert_true("retry_seconds + 1.0" in text, "Groq retry must respect the provider delay")
+    assert_true(
+        'risk_sources = list(st.session_state.get("last_report_risk_sources", []))' in text,
+        "Excel and customer presentation must use the same canonical audit set",
+    )
+    presentation_source = text.split(
+        "def build_audit_presentation_replacements", 1
+    )[1].split("def render_audit_presentation_template", 1)[0]
+    assert_true(
+        "professionalize_risk_item(item, results, context)" not in presentation_source
+        and "align_report_vendors(item, results, context)" not in presentation_source,
+        "Presentation must not reinterpret the canonical Excel findings",
+    )
     assert_true("Сервис формирования экспертного заключения временно недоступен" in text, "Customer-safe generation error is missing")
     assert_true('replacements["__RECOMMENDATION_COUNT__"]' in text, "Presentation must support a variable recommendation count")
     assert_true("partial_recommendation_slide" in text, "Odd recommendation counts must use a single-card final slide")
-    assert_true("entry = recommendation_by_key.get(roadmap_key)" in text, "Roadmap must exclude topics without a confirmed recommendation")
-    assert_true("def staged_roadmap_action" in text, "Roadmap must provide assessment, pilot, and rollout stages")
-    assert_true("roadmap_keys_by_phase" in text, "Roadmap must deduplicate technologies within each phase")
+    assert_true("def build_canonical_report_roadmap" in text, "A shared fact-checked roadmap builder is missing")
+    assert_true("def build_confirmed_it_gap_risks" in text, "Confirmed IT gaps are not protected from AI omission")
+    assert_true(
+        "combined_risks.extend(build_confirmed_it_gap_risks(results, context))" in text,
+        "Questionnaire-confirmed IT gaps do not reach the canonical report set",
+    )
+    assert_true("def canonical_roadmap_action" in text, "Roadmap must provide assessment, pilot, and rollout stages")
+    assert_true(
+        text.count("build_canonical_report_roadmap(") >= 3,
+        "Excel and presentation must consume the same canonical roadmap",
+    )
+    assert_true(
+        'roadmap_items = ai_narrative.get("roadmap")' not in text,
+        "Unverified AI roadmap must not override confirmed report findings",
+    )
     assert_true("recover_complete_risk_objects(response_text)" in text, "Malformed AI JSON recovery is missing")
 
 

@@ -5,6 +5,7 @@ import os
 import html
 import base64
 import json
+import math
 import re
 import zlib
 import threading
@@ -104,7 +105,7 @@ def get_app_secret(name, default=None):
 
 
 APP_INSTANCE_DEFAULT = "Khalil"
-APP_VERSION = "12.20"
+APP_VERSION = "12.30"
 
 
 def get_app_instance_label():
@@ -897,6 +898,260 @@ def ai_quality_gate(items, min_items=6, min_security_items=3, min_it_items=3):
         return [], "ИИ почти не покрыл ИТ-инфраструктуру; включены экспертные правила."
 
     return prepared, ""
+
+
+IT_GAP_LABELS = {
+    "wifi_capacity": "емкость, покрытие и централизованное управление Wi-Fi",
+    "network_performance": "каналы связи и отказоустойчивость сети",
+    "virtualization": "ресурсный запас и capacity planning виртуализации",
+    "storage": "емкость и производительность СХД",
+    "it_monitoring": "единый мониторинг ИТ-сервисов и инфраструктуры",
+    "itam": "CMDB, инвентаризация и жизненный цикл ИТ-активов",
+    "change_management": "управление изменениями и планами отката",
+    "dr": "RTO/RPO и регулярные тесты восстановления",
+}
+
+
+def confirmed_it_gap_topics(results):
+    """Return only IT gaps explicitly supported by structured answers or notes."""
+    def result_int(value):
+        match = re.search(r"-?\d+(?:[.,]\d+)?", str(value or ""))
+        if match:
+            try:
+                return int(float(match.group(0).replace(",", ".")))
+            except (TypeError, ValueError):
+                pass
+        try:
+            return int(float(value or 0))
+        except (TypeError, ValueError):
+            return 0
+
+    gaps = {}
+    notes = " ".join(
+        str(value or "")
+        for key, value in results.items()
+        if "примечан" in str(key).lower()
+    ).lower()
+
+    users = result_int(results.get("_user_count"))
+    access_points = result_int(results.get("WiFi Точки"))
+    main_speed = result_int(results.get("_main_speed"))
+    backup_speed = result_int(results.get("_back_speed"))
+    wifi_controller = str(results.get("WiFi Контроллер", "Нет")).strip().lower()
+    overloaded_wifi = users > 0 and access_points > 0 and users / access_points > 30
+    weak_backup = main_speed > 0 and (backup_speed <= 0 or backup_speed / main_speed < 0.25)
+    wifi_without_controller = (
+        access_points >= 4
+        and wifi_controller in {"", "нет", "no", "none"}
+    )
+    if overloaded_wifi or wifi_without_controller or any(
+        marker in notes
+        for marker in ("wi-fi перегруж", "wifi перегруж", "нестабильный роуминг", "радиообследован")
+    ):
+        wifi_facts = []
+        if users and access_points:
+            wifi_facts.append(f"{access_points} точек на {users} пользователей")
+        if wifi_without_controller:
+            wifi_facts.append("централизованный контроллер не указан")
+        fact_suffix = f" ({'; '.join(wifi_facts)})" if wifi_facts else ""
+        gaps["wifi_capacity"] = IT_GAP_LABELS["wifi_capacity"] + fact_suffix
+
+    if weak_backup or any(
+        marker in notes
+        for marker in (
+            "резервный канал слаб", "резервный канал недостаточ", "резервный канал перегруж",
+            "failover не", "переключение тестируется нерегулярно", "отказоустойчивость канал не",
+        )
+    ):
+        gaps["network_performance"] = IT_GAP_LABELS["network_performance"]
+
+    if any(marker in notes for marker in (
+        "capacity planning не", "запас вычислительной мощности недостаточ",
+        "запас мощности недостаточ", "загрузка памяти достигает",
+    )):
+        gaps["virtualization"] = IT_GAP_LABELS["virtualization"]
+
+    storage_fill = re.search(r"(?:схд|хранилищ\w*)[^.]{0,60}(\d{2,3})\s*%", notes)
+    if (
+        storage_fill and int(storage_fill.group(1)) >= 80
+    ) or any(marker in notes for marker in (
+        "прогноз исчерпания не", "порог расширения", "latency",
+    )):
+        gaps["storage"] = IT_GAP_LABELS["storage"]
+
+    if any(marker in notes for marker in (
+        "без единой панели", "не объединен в единый контур",
+        "разрозненный мониторинг", "события мониторинга и изменения не связаны",
+    )):
+        gaps["it_monitoring"] = IT_GAP_LABELS["it_monitoring"]
+
+    if any(marker in notes for marker in (
+        "cmdb отсутств", "учет жизненного цикла оборудования ведется в нескольких",
+        "единый реестр активов отсутств",
+    )):
+        gaps["itam"] = IT_GAP_LABELS["itam"]
+
+    if any(marker in notes for marker in (
+        "изменения согласуются в чат", "календарь изменений",
+        "план отката используются не", "change management не",
+    )):
+        gaps["change_management"] = IT_GAP_LABELS["change_management"]
+
+    continuity_gap = (
+        ("rto" in notes or "rpo" in notes)
+        and any(marker in notes for marker in ("не согласован", "не определен", "не утвержден"))
+    ) or ("восстанов" in notes and "нерегуляр" in notes)
+    if continuity_gap:
+        gaps["dr"] = IT_GAP_LABELS["dr"]
+
+    return gaps
+
+
+def build_confirmed_it_gap_risks(results, context):
+    """Convert questionnaire-confirmed IT gaps into fact-safe fallback findings."""
+    gaps = confirmed_it_gap_topics(results)
+    if not gaps:
+        return []
+
+    def number(value):
+        match = re.search(r"-?\d+(?:[.,]\d+)?", str(value or ""))
+        return float(match.group(0).replace(",", ".")) if match else 0.0
+
+    users = int(number(results.get("_user_count")))
+    access_points = int(number(results.get("WiFi Точки")))
+    main_speed = number(results.get("_main_speed") or results.get("Интернет канал (осн)"))
+    backup_speed = number(results.get("_back_speed") or results.get("Резервный канал"))
+    templates = {
+        "wifi_capacity": {
+            "level": "HIGH" if users and access_points and users / access_points > 45 else "MEDIUM",
+            "risk": "Емкость и централизованное управление Wi-Fi требуют усиления",
+            "description": (
+                f"В анкете указано {access_points} точек доступа для контура из {users} рабочих мест; "
+                f"Wi-Fi контроллер: {results.get('WiFi Контроллер', 'Нет')}."
+            ),
+            "impact": "Перегрузка радиоэфира и отсутствие единого управления могут снижать качество связи, роуминга и видеоконференций.",
+            "recommendation": "Провести радиообследование, определить требуемую плотность точек доступа и выполнить пилот централизованного WLAN-управления.",
+            "success_metric": "Покрытие и емкость подтверждены радиообследованием; пиковая загрузка точек остается в целевых пределах",
+            "vendors": ["Wi-Fi", "WLAN"],
+        },
+        "network_performance": {
+            "level": "HIGH" if main_speed and (backup_speed <= 0 or backup_speed / main_speed < 0.1) else "MEDIUM",
+            "risk": "Резервный канал не обеспечивает подтвержденную отказоустойчивость",
+            "description": (
+                f"Основной канал: {int(main_speed)} Mbit/s; резервный канал: "
+                f"{int(backup_speed)} Mbit/s. Автоматическое переключение и независимость трасс требуют подтверждения."
+            ),
+            "impact": "При отказе основного канала критичные облачные сервисы, удаленная работа и коммуникации могут деградировать или стать недоступными.",
+            "recommendation": "Определить требуемую резервную полосу и SLA, проверить независимость операторов и трасс, затем провести тест автоматического failover под рабочей нагрузкой.",
+            "success_metric": "Резервный канал выдерживает согласованную критичную нагрузку; failover проходит в пределах SLA",
+            "vendors": ["Network Equipment", "SD-WAN"],
+        },
+        "virtualization": {
+            "level": "HIGH",
+            "risk": "Виртуальной среде требуется подтвержденный запас ресурсов",
+            "description": "Примечания анкеты указывают на недостаточный ресурсный запас или отсутствие формализованного capacity planning виртуальной среды.",
+            "impact": "Недостаточный запас повышает вероятность деградации или простоя критичных сервисов при росте нагрузки и отказе хоста.",
+            "recommendation": "Провести capacity-анализ, проверить сценарий отказа хоста и подготовить план расширения вычислительных ресурсов.",
+            "success_metric": "Запас ресурсов подтвержден для отказа одного хоста и прогнозируемого роста нагрузки",
+            "vendors": ["Virtualization"],
+        },
+        "storage": {
+            "level": "HIGH",
+            "risk": "Емкость и производительность СХД требуют управляемого плана развития",
+            "description": "Анкета подтверждает высокий уровень заполнения, отсутствие утвержденного порога расширения или недостаточную глубину статистики производительности СХД.",
+            "impact": "Исчерпание емкости или деградация производительности могут остановить зависимые бизнес-системы и усложнить восстановление.",
+            "recommendation": "Провести health-check СХД, утвердить пороги расширения и план развития емкости, производительности и репликации.",
+            "success_metric": "Запас емкости и производительности контролируется по утвержденным порогам и прогнозу роста",
+            "vendors": ["Storage"],
+        },
+        "it_monitoring": {
+            "level": "HIGH",
+            "risk": "ИТ-мониторинг не объединен в единый эксплуатационный контур",
+            "description": "Примечания анкеты подтверждают разрозненный контроль серверов, виртуализации, СХД или каналов без единой панели и SLA реакции.",
+            "impact": "Команда позднее обнаруживает деградацию сервисов и не имеет единой картины доступности, производительности и емкости.",
+            "recommendation": "Определить критичные сервисы и метрики, провести пилот единого ИТ-мониторинга и связать оповещения с ответственными и SLA реакции.",
+            "success_metric": "Критичные сервисы имеют единые метрики, пороги, владельцев реакции и отчетность по SLA",
+            "vendors": ["IT Monitoring", "NMS"],
+        },
+        "itam": {
+            "level": "HIGH",
+            "risk": "Учет ИТ-активов и сервисов не централизован",
+            "description": "Примечания анкеты подтверждают отсутствие единой CMDB, каталога услуг или управляемого жизненного цикла ИТ-активов.",
+            "impact": "Неполные данные об активах и зависимостях замедляют устранение инцидентов, изменения и планирование бюджета.",
+            "recommendation": "Сформировать модель данных CMDB, назначить владельцев и связать активы с сервисами, изменениями и SLA.",
+            "success_metric": "Не менее 95% критичных активов и сервисов имеют владельца, зависимости и актуальный статус",
+            "vendors": ["ITAM", "ITSM", "CMDB"],
+        },
+        "change_management": {
+            "level": "HIGH",
+            "risk": "Управление изменениями не формализовано",
+            "description": "Примечания анкеты подтверждают согласование изменений в чатах или неполное применение календаря изменений и планов отката.",
+            "impact": "Непроверенные изменения повышают вероятность простоев и усложняют восстановление и расследование инцидентов.",
+            "recommendation": "Ввести единый процесс регистрации, оценки риска, согласования, тестирования и отката продуктивных изменений.",
+            "success_metric": "Все продуктивные изменения имеют владельца, согласование, тест и план отката",
+            "vendors": ["ITSM", "Change Management", "CMDB"],
+        },
+        "dr": {
+            "level": "HIGH",
+            "risk": "RTO/RPO и регулярное тестирование восстановления не формализованы",
+            "description": "Примечания анкеты подтверждают отсутствие согласованных RTO/RPO или нерегулярное полное тестовое восстановление.",
+            "impact": "Наличие резервных копий не гарантирует восстановление критичных сервисов в приемлемые для бизнеса сроки.",
+            "recommendation": "Согласовать RTO/RPO, провести контрольное восстановление и утвердить регулярные DR-учения с фиксацией результатов.",
+            "success_metric": "Критичные сервисы проходят регулярный тест восстановления в пределах утвержденных RTO/RPO",
+            "vendors": ["DR", "Backup"],
+        },
+    }
+
+    findings = []
+    for key in gaps:
+        template = templates.get(key)
+        if not template:
+            continue
+        findings.append({
+            **template,
+            "semantic_key": key,
+            "_semantic_key": key,
+            "_ai_area": "ИТ",
+            "_source": "Базовые правила",
+            "evidence": [templates[key]["description"]],
+        })
+    return findings
+
+
+def ai_it_gap_coverage(items, expected_gaps):
+    covered = set()
+    coverage_markers = {
+        "wifi_capacity": (
+            "wi-fi", "wifi", "беспровод", "роуминг", "радиообслед", "точк доступа",
+            "wlan", "контроллер", "ssid",
+        ),
+        "network_performance": (
+            "резервн", "канал", "пропускн", "failover", "отказоустойчив",
+            "маршрутиз", "wan", "sla",
+        ),
+        "virtualization": ("виртуал", "гипервиз", "vmware", "хост", "cpu", "ram"),
+        "storage": ("схд", "storage", "raid", "iops", "latency", "емкост"),
+        "it_monitoring": ("мониторинг", "наблюдаемост", "метрик", "nms", "доступност"),
+        "itam": ("cmdb", "itam", "актив", "инвентаризац", "жизненн"),
+        "change_management": ("изменен", "change", "откат", "согласован"),
+        "dr": ("rto", "rpo", "восстанов", "dr", "аварийн"),
+    }
+    for item in items if isinstance(items, list) else []:
+        if not isinstance(item, dict):
+            continue
+        covered.add(risk_semantic_key(item))
+        text = " ".join(
+            str(item.get(field, ""))
+            for field in ("risk", "description", "impact", "recommendation", "success_metric")
+        ).lower()
+        for key, markers in coverage_markers.items():
+            if key in expected_gaps and any(marker in text for marker in markers):
+                covered.add(key)
+    if "backup" in covered:
+        covered.add("dr")
+    matched = [key for key in expected_gaps if key in covered]
+    missing = [key for key in expected_gaps if key not in covered]
+    return matched, missing
 
 
 def security_control_snapshot(results):
@@ -1843,6 +2098,7 @@ def ai_generate_risks_and_recs(c_info, results):
         groq_model = get_app_secret("GROQ_MODEL", "openai/gpt-oss-120b")
         groq_timeout = int(get_app_secret("GROQ_TIMEOUT_SECONDS", 55))
         ai_timeout = int(get_app_secret("GEMINI_TIMEOUT_SECONDS", 45))
+        gemini_quality_attempts = int(get_app_secret("GEMINI_QUALITY_ATTEMPTS", 4))
         fallback_models = str(get_app_secret(
             "GEMINI_FALLBACK_MODELS",
             "gemini-2.5-flash-lite"
@@ -1860,6 +2116,11 @@ def ai_generate_risks_and_recs(c_info, results):
         enabled_controls, missing_controls = security_control_snapshot(results)
         enabled_controls_text = "\n".join(enabled_controls) if enabled_controls else "Не указаны"
         missing_controls_text = ", ".join(missing_controls) if missing_controls else "Нет явных пробелов"
+        confirmed_it_gaps = confirmed_it_gap_topics(results)
+        confirmed_it_gaps_text = "\n".join(
+            f"- {key}: {label}"
+            for key, label in confirmed_it_gaps.items()
+        ) or "- Явные ИТ-разрывы не подтверждены"
 
         vendor_context = ""
 
@@ -1871,7 +2132,8 @@ def ai_generate_risks_and_recs(c_info, results):
             summary = []
             priority_markers = (
                 "арм", "ос", "сервер", "виртуал", "схд", "резерв", "backup",
-                "маршрут", "канал", "ngfw", "vpn", "epp", "edr", "xdr", "mdr",
+                "маршрут", "канал", "wi-fi", "wifi", "точк", "контроллер", "примечан",
+                "ngfw", "vpn", "epp", "edr", "xdr", "mdr",
                 "dlp", "mail", "waf", "ddos", "ids", "nac", "ztna", "iam",
                 "mfa", "pam", "siem", "soar", "уязв", "patch", "web", "разработ"
             )
@@ -2202,6 +2464,7 @@ JSON должен быть валидным: все строковые знач�
 - в roadmap не указывай производителей и названия продуктов; используй только классы технологий и управленческие действия.
 - result каждого объекта roadmap должен описывать измеримый результат именно его action, а не всей фазы целиком.
 - для новых решений соблюдай порядок: требования и критерии -> ограниченный пилот -> решение о закупке и масштабировании.
+- каждый подтвержденный ИТ-разрыв ниже оформляй самостоятельным объектом risks; не объединяй Wi-Fi с резервированием WAN-канала.
 
 Отрасль: {c_info.get("Сфера деятельности", "-")}
 
@@ -2216,6 +2479,9 @@ JSON должен быть валидным: все строковые знач�
 
 Регуляторный контекст:
 {regulator_context[:1200]}
+
+Подтвержденные ИТ-разрывы, которые нельзя игнорировать:
+{confirmed_it_gaps_text}
 """
         fallback_payload = {
             "contents": [
@@ -2230,11 +2496,29 @@ JSON должен быть валидным: все строковые знач�
             },
         }
 
+        minimal_prompt = f"""
+Ты CISO/CTO-аудитор. Верни только валидный JSON без markdown.
+Корневые поля: executive_summary, audit_observations, it_recommendations,
+security_recommendations, management_decisions, roadmap.
+Каждый подтвержденный ИТ-разрыв оформи самостоятельной законченной рекомендацией.
+Не объединяй Wi-Fi с резервированием WAN. Не предлагай уже внедренные контроли.
+Для каждой рекомендации укажи level, risk, description, impact, recommendation,
+evidence, success_metric, vendors, legal_ids и frameworks.
+
+Подтвержденные ИТ-разрывы:
+{confirmed_it_gaps_text}
+
+Уже внедрено:
+{enabled_controls_text}
+
+Факты анкеты:
+{ai_summary[:4200]}
+"""
         minimal_payload = {
             "contents": [
                 {
                     "role": "user",
-                    "parts": [{"text": compact_prompt[:6000]}]
+                    "parts": [{"text": minimal_prompt}]
                 }
             ],
             "generationConfig": {
@@ -2261,13 +2545,16 @@ LEVEL только CRITICAL, HIGH, MEDIUM или LOW.
 {missing_controls_text}
 
 Данные:
-{ai_summary}
+{ai_summary[:3600]}
+
+Подтвержденные ИТ-разрывы, каждый из которых нужен отдельной строкой:
+{confirmed_it_gaps_text}
 """
         line_payload = {
             "contents": [
                 {
                     "role": "user",
-                    "parts": [{"text": line_prompt[:5000]}]
+                    "parts": [{"text": line_prompt}]
                 }
             ],
             "generationConfig": {
@@ -2550,9 +2837,9 @@ LEVEL только CRITICAL, HIGH, MEDIUM или LOW.
                 missing_narrative.append("roadmap phases<2")
             if missing_narrative:
                 errors.append(
-                    f"{provider_label}: неполный материал для презентации ({', '.join(missing_narrative)})"
+                    f"{provider_label}: часть презентационного материала будет дополнена "
+                    f"экспертным движком ({', '.join(missing_narrative)})"
                 )
-                return None
             raw_candidate_count = count_ai_risk_candidates(parsed_payload)
             normalized_payload = normalize_ai_risks_payload(parsed_payload)
             normalized_payload = augment_ai_risks_from_narrative(
@@ -2570,7 +2857,7 @@ LEVEL только CRITICAL, HIGH, MEDIUM или LOW.
             explicit_no_findings = bool(present_recommendation_fields) and not normalized_payload and all(
                 not parsed_payload.get(field) for field in present_recommendation_fields
             )
-            if explicit_no_findings:
+            if explicit_no_findings and not confirmed_it_gaps:
                 st.session_state.ai_last_error = ""
                 st.session_state.ai_model_used = model_label
                 st.session_state.ai_provider_used = provider_label
@@ -2596,7 +2883,16 @@ LEVEL только CRITICAL, HIGH, MEDIUM или LOW.
                     min_it_items=0,
                 )
             else:
-                prepared_payload, quality_error = ai_quality_gate(normalized_payload)
+                minimum_ai_items = max(
+                    1,
+                    min(4, math.ceil(len(confirmed_it_gaps) * 0.5)),
+                ) if confirmed_it_gaps else 1
+                prepared_payload, quality_error = ai_quality_gate(
+                    normalized_payload,
+                    min_items=minimum_ai_items,
+                    min_security_items=0,
+                    min_it_items=0,
+                )
             if not prepared_payload:
                 rejection_details = explain_ai_risk_rejections(normalized_payload)
                 errors.append(
@@ -2608,6 +2904,30 @@ LEVEL только CRITICAL, HIGH, MEDIUM или LOW.
                 )
                 return None
 
+            matched_it_gaps, missing_it_gaps = ai_it_gap_coverage(
+                prepared_payload,
+                confirmed_it_gaps,
+            )
+            minimum_it_gap_coverage = max(
+                1,
+                math.ceil(len(confirmed_it_gaps) * 0.7),
+            ) if confirmed_it_gaps else 0
+            mandatory_it_gaps = {
+                key for key in ("wifi_capacity", "network_performance")
+                if key in confirmed_it_gaps
+            }
+            missing_mandatory_it_gaps = mandatory_it_gaps.intersection(missing_it_gaps)
+            if (
+                len(matched_it_gaps) < minimum_it_gap_coverage
+                or missing_mandatory_it_gaps
+            ):
+                errors.append(
+                    f"{provider_label}: ИТ-анализ покрыл {len(matched_it_gaps)} из "
+                    f"{len(confirmed_it_gaps)} подтвержденных тем; не покрыты: "
+                    + ", ".join(confirmed_it_gaps.get(key, key) for key in missing_it_gaps)
+                )
+                return None
+
             st.session_state.ai_last_error = ""
             st.session_state.ai_model_used = model_label
             st.session_state.ai_provider_used = provider_label
@@ -2615,7 +2935,19 @@ LEVEL только CRITICAL, HIGH, MEDIUM или LOW.
             st.session_state.ai_analysis_succeeded = True
             return prepared_payload
 
-        def call_groq_once():
+        def call_groq_once(focus_it=False):
+            focus_instruction = ""
+            if focus_it:
+                focus_instruction = """
+Предыдущий ответ был отклонен, потому что предлагал уже внедренные ИБ-контроли.
+Сформируй рекомендации ТОЛЬКО по подтвержденным ИТ-разрывам из фактов и примечаний:
+производительность и управляемость Wi-Fi, емкость каналов и failover, мониторинг,
+capacity planning серверов/виртуализации/СХД, CMDB/ITAM, change management,
+SLA, RTO/RPO, тесты восстановления и эксплуатационные процессы. Не упоминай
+внедрение DLP, SIEM, EDR/XDR, MFA, PAM, WAF, NAC, patch management и других
+контролей, если они перечислены в блоке «Уже внедрено». Не создавай ИБ-риск
+только ради баланса доменов.
+""".strip()
             groq_prompt = f"""
 Ты senior-аудитор ИТ и ИБ. Проанализируй только факты обезличенной анкеты.
 Верни от 4 до 6 законченных подтвержденных рекомендаций по ИТ и ИБ, если в блоке
@@ -2623,6 +2955,11 @@ LEVEL только CRITICAL, HIGH, MEDIUM или LOW.
 который используется в roadmap, обязательно представь отдельным объектом в risks.
 Не добавляй искусственные пункты ради количества. Если ответ не помещается, сократи число
 пунктов, но обязательно заверши JSON и каждую выданную рекомендацию.
+
+{focus_instruction}
+
+Подтвержденные ИТ-разрывы для обязательного покрытия:
+{confirmed_it_gaps_text}
 
 Верни только валидный JSON-объект со следующими корневыми полями:
 - executive_summary: 3 коротких содержательных вывода для руководителя;
@@ -2741,19 +3078,39 @@ vendors (массив строк), legal_ids (массив строк), framewor
                 raise RuntimeError("Groq вернул пустой ответ")
             return parse_ai_response_text(str(response_text))
 
+        def call_groq_with_rate_limit_retry(focus_it=False):
+            try:
+                return call_groq_once(focus_it=focus_it)
+            except Exception as exc:
+                error_text = str(exc)
+                if "HTTP 429" not in error_text and "rate limit" not in error_text.lower():
+                    raise
+                retry_match = re.search(
+                    r"try again in\s+([0-9]+(?:\.[0-9]+)?)s",
+                    error_text,
+                    flags=re.IGNORECASE,
+                )
+                retry_seconds = float(retry_match.group(1)) if retry_match else 35.0
+                time.sleep(min(50.0, max(5.0, retry_seconds + 1.0)))
+                return call_groq_once(focus_it=focus_it)
+
         ai_errors = []
         payload_attempts = (
             ("json", fallback_payload),
             ("json", minimal_payload),
             ("line", line_payload),
         )
-        stop_gemini = False
-
+        gemini_attempt_count = 0
         if api_key:
-            for response_format, request_payload in payload_attempts:
-                if stop_gemini:
+            # Exhaust the primary Gemini model and its compact recovery formats
+            # before moving to another Gemini model, and only then fall back to Groq.
+            for active_model in model_candidates:
+                if gemini_attempt_count >= gemini_quality_attempts:
                     break
-                for active_model in model_candidates:
+                for response_format, request_payload in payload_attempts:
+                    if gemini_attempt_count >= gemini_quality_attempts:
+                        break
+                    gemini_attempt_count += 1
                     try:
                         response_payload, response_text = call_gemini_with_retries(
                             request_payload,
@@ -2772,17 +3129,23 @@ vendors (массив строк), legal_ids (массив строк), framewor
                         )
                         if prepared_payload is not None:
                             return prepared_payload
-                        stop_gemini = True
-                        break
                     except Exception as exc:
                         safe_error = redact_secret(exc, api_key)
                         ai_errors.append(f"Gemini/{active_model}: {safe_error}")
-                        stop_gemini = True
-                        break
 
         if groq_api_key:
             try:
-                parsed_payload = call_groq_once()
+                parsed_payload = call_groq_with_rate_limit_retry()
+                prepared_payload = accept_ai_payload(
+                    parsed_payload,
+                    "Groq",
+                    groq_model,
+                    ai_errors,
+                )
+                if prepared_payload is not None:
+                    return prepared_payload
+
+                parsed_payload = call_groq_with_rate_limit_retry(focus_it=True)
                 prepared_payload = accept_ai_payload(
                     parsed_payload,
                     "Groq",
@@ -4791,10 +5154,19 @@ if net_active:
         st.write("Резервный канал")
         back_net_kwargs = {"key": "back_net_type", "help": "Наличие и тип независимого резервного канала."}
         if "back_net_type" not in st.session_state:
-            back_net_kwargs["index"] = 7
+            back_net_kwargs["index"] = net_types.index("Нет")
         back_type = st.selectbox("Тип (резервный)", net_types, **back_net_kwargs)
-        back_speed = st.number_input("Скорость резервного (Mbit/s)", min_value=0, step=10, key="back_net_speed")
-        data['1.2.2. Резервный канал'] = f"{back_type} ({back_speed} Mbit/s)"
+        entered_back_speed = st.number_input(
+            "Скорость резервного (Mbit/s)",
+            min_value=0,
+            step=10,
+            key="back_net_speed",
+            disabled=back_type == "Нет",
+        )
+        back_speed = 0 if back_type == "Нет" else entered_back_speed
+        data['1.2.2. Резервный канал'] = (
+            "Нет" if back_type == "Нет" else f"{back_type} ({back_speed} Mbit/s)"
+        )
 
     st.write("Логика сети")
     selected_routing = st.multiselect("Тип маршрутизации*", routing_types, key="routing_sel", help="Протоколы динамической маршрутизации, используемые в сети.")
@@ -5305,12 +5677,20 @@ def calculate_weighted_security_score(enabled, controls):
     if not enabled:
         return 0
 
-    total = 0
+    available_weight = sum(max(0, weight) for _, _, weight in controls)
+    if available_weight <= 0:
+        return 0
+
+    earned_weight = 0
     for is_enabled, vendor, weight in controls:
         if is_enabled and str(vendor).strip():
-            total += weight
+            earned_weight += max(0, weight)
 
-    return min(100, total)
+    # Анкета подтверждает наличие средств защиты, но не качество настройки,
+    # покрытие активов и эффективность реагирования. Поэтому самооценка без
+    # проверки артефактов не может означать абсолютные 100% зрелости.
+    normalized_score = round((earned_weight / available_weight) * 92)
+    return min(92, max(0, normalized_score))
 
 
 def calculate_it_maturity_score(
@@ -5339,6 +5719,9 @@ def calculate_it_maturity_score(
     dev_count,
     sel_langs,
     cicd_active,
+    wifi_enabled=False,
+    wifi_ctrl_enabled=False,
+    operational_notes=None,
 ):
     earned = 0.0
     available = 20.0
@@ -5393,9 +5776,62 @@ def calculate_it_maturity_score(
         earned += 4 if cicd_active else 0
 
     score = round((earned / available) * 100) if available else 0
-    # Анкета не подтверждает ITSM, capacity management и регулярность DR-тестов,
-    # поэтому оптимальность выше 95% по ее данным доказать нельзя.
-    return min(95, max(0, score))
+    penalty = 0
+
+    if net_active and main_speed > 0 and total_arm > 0:
+        bandwidth_per_arm = main_speed / total_arm
+        if bandwidth_per_arm < 1:
+            penalty += 5
+        elif bandwidth_per_arm < 2:
+            penalty += 2
+
+    if net_active and main_speed > 0:
+        reserve_ratio = back_speed / main_speed if back_speed > 0 else 0
+        if reserve_ratio == 0:
+            penalty += 10
+        elif reserve_ratio < 0.1:
+            penalty += 7
+        elif reserve_ratio < 0.25:
+            penalty += 4
+
+    if net_active and wifi_enabled and ap_cnt > 0 and total_arm > 0:
+        endpoints_per_ap = total_arm / ap_cnt
+        if endpoints_per_ap > 50:
+            penalty += 7
+        elif endpoints_per_ap > 30:
+            penalty += 4
+        if ap_cnt >= 4 and not wifi_ctrl_enabled:
+            penalty += 6
+
+    notes = " ".join(str(value or "") for value in (operational_notes or [])).lower()
+    if any(marker in notes for marker in (
+        "без единой панели", "не объединен в единый контур",
+        "разрозненный мониторинг", "разрозненные системы мониторинга",
+    )):
+        penalty += 4
+    if any(marker in notes for marker in (
+        "capacity planning не", "запас вычислительной мощности недостаточ",
+        "запас мощности недостаточ", "перегружена виртуализац",
+    )):
+        penalty += 4
+    if (
+        ("rto" in notes or "rpo" in notes)
+        and any(marker in notes for marker in ("не согласован", "не определен", "не утвержден"))
+    ) or ("восстанов" in notes and "нерегуляр" in notes):
+        penalty += 4
+    if any(marker in notes for marker in (
+        "cmdb отсутств", "изменения согласуются в чат",
+        "календарь изменений" , "план отката используются не",
+    )):
+        penalty += 4
+
+    storage_fill = re.search(r"(?:схд|хранилищ\w*)[^.]{0,50}(\d{2,3})\s*%", notes)
+    if storage_fill and int(storage_fill.group(1)) >= 80:
+        penalty += 4
+
+    # Наличие оборудования и ПО не равно зрелости эксплуатации. Верхняя граница
+    # отражает отсутствие проверки SLA, ITSM, capacity и DR-артефактов в анкете.
+    return min(90, max(0, score - penalty))
 
 
 def build_context(results, client_info):
@@ -6159,7 +6595,8 @@ def solution_categories_for_report_item(item):
         "dr": "Disaster Recovery; RTO/RPO-планирование",
         "appsec": "SAST / DAST / SCA",
         "business_systems": "Обследование бизнес-систем; интеграционный аудит",
-        "network_performance": "Аудит сетевой архитектуры; NMS / Network Performance Monitoring",
+        "wifi_capacity": "Обследование Wi-Fi; централизованное WLAN-управление; оптимизация радиопокрытия",
+        "network_performance": "Резервирование WAN; SD-WAN; балансировка каналов; контроль SLA",
         "itam": "ITAM / SAM / управление лицензиями",
     }
     return categories_by_key.get(key, "Уточнить класс решения по результатам пресейла")
@@ -6216,7 +6653,8 @@ def portfolio_manufacturers_for_report_item(item):
         "storage": (["Storage", "Backup"], [], []),
         "dr": (["Backup", "DR"], [], []),
         "appsec": (["SAST", "DAST", "SCA", "VM"], ["Qualys", "Checkmarx", "HCL AppScan"], []),
-        "network_performance": (["Network Equipment", "Monitoring", "NMS"], ["Cisco", "Fortinet", "ManageEngine", "Broadcom"], []),
+        "wifi_capacity": (["Network Equipment", "Wireless", "Wi-Fi"], ["Cisco", "Huawei", "Fortinet"], []),
+        "network_performance": (["Network Equipment", "SD-WAN", "Monitoring", "NMS"], ["Fortinet", "Cisco", "Huawei", "Check Point", "ManageEngine"], ["Broadcom (Symantec)"]),
         "itam": (["ITAM", "ITSM"], ["ManageEngine", "Ivanti"], []),
     }
 
@@ -7560,14 +7998,34 @@ def risk_source_label(source):
 
 
 def risk_semantic_key(item):
+    explicit_key = str(
+        item.get("semantic_key") or item.get("_semantic_key") or ""
+    ).strip()
+    if explicit_key:
+        return explicit_key
+
     title = str(item.get("risk", "")).strip().lower()
     if "сегментац" in title and not any(marker in title for marker in ("nac", "network access control")):
         return "segmentation"
+
+    title_buckets = [
+        ("wifi_capacity", ("wi-fi", "wifi", "wlan", "беспроводн", "роуминг", "точек доступа")),
+        ("network_performance", ("канал связи", "канала связи", "резервный канал", "wan", "failover")),
+        ("storage", ("схд", "storage", "дисков", "хранилищ")),
+        ("virtualization", ("виртуальн", "гипервизор", "vmware", "hyper-v")),
+        ("dr", ("rto", "rpo", "аварийн", "drp", "disaster recovery")),
+        ("it_monitoring", ("мониторинг ит", "мониторинга ит", "мониторинг инфраструктур", "наблюдаемост")),
+        ("change_management", ("управления изменениями", "управление изменениями", "change management")),
+    ]
+    for key, markers in title_buckets:
+        if any(marker in title for marker in markers):
+            return key
 
     text = " ".join(
         str(item.get(field, ""))
         for field in ("risk", "description", "impact", "recommendation")
     ).lower()
+    text = re.sub(r"[\u2010-\u2015\u2212]", "-", text)
 
     buckets = [
         ("mfa", ("mfa", "многофактор", "2fa", "двухфактор")),
@@ -7577,19 +8035,30 @@ def risk_semantic_key(item):
         ("nac", ("nac", "контроль подключения устройств", "контроль доступа устройств к сети", "network access control")),
         ("dlp", ("dlp", "утеч", "эксфильтрац", "data loss")),
         ("siem_soc", ("siem", "soc", "soar", "мониторинг событий", "централизованный мониторинг")),
-        ("network_performance", ("масштабируемость сетевой", "производительность сетевой", "сетевая топология", "конфигурации маршрутизации")),
-        ("itam", ("программными активами", "жизненным циклом", "управление активами", "лицензи", "инвентаризац")),
+        ("wifi_capacity", (
+            "wi-fi", "wifi", "wlan", "беспроводн", "роуминг", "радиообслед",
+            "точек доступа", "точки доступа", "контроллер беспровод",
+        )),
+        ("network_performance", (
+            "масштабируемость сетевой", "производительность сетевой", "сетевая топология",
+            "конфигурации маршрутизации",
+            "резервный канал", "пропускная способность", "failover",
+        )),
+        ("itam", (
+            "программными активами", "жизненным циклом", "управление активами",
+            "лицензи", "инвентаризац", "cmdb", "учет активов",
+        )),
         ("change_management", ("управления изменениями", "управление изменениями", "change management", "изменениями и конфигурациями")),
         ("patch", ("patch", "обновлен", "cve", "уязвим")),
         ("endpoint_detection", ("edr", "xdr", "endpoint", "рабочих мест", "lateral movement")),
         ("backup", ("backup", "резерв", "immutable", "ransomware")),
+        ("dr", ("dr", "аварийн", "rto", "rpo", "восстановлен")),
         ("web_waf", ("waf", "web", "веб", "owasp", "публичн")),
         ("segmentation", ("сегментац", "vlan", "lateral")),
         ("mail", ("mail", "почт", "фишинг")),
-        ("it_monitoring", ("эксплуатационный мониторинг", "доступности", "производительности", "capacity")),
         ("virtualization", ("виртуализац", "гипервизор", "vm", "хост")),
         ("storage", ("схд", "storage", "raid", "snapshot", "iops")),
-        ("dr", ("dr", "аварийн", "rto", "rpo", "восстановлен")),
+        ("it_monitoring", ("эксплуатационный мониторинг", "доступности", "производительности", "capacity")),
         ("appsec", ("sast", "dast", "appsec", "разработ", "безопасность прилож")),
         ("business_systems", ("erp", "crm", "бизнес-систем")),
     ]
@@ -8090,6 +8559,7 @@ def build_report_risk_set(c_info, results, context):
             for item in ai_risks
             if isinstance(item, dict)
         ])
+    combined_risks.extend(build_confirmed_it_gap_risks(results, context))
     combined_risks.extend(rule_risks)
 
     priority_order = {"CRITICAL": 1, "HIGH": 2, "MEDIUM": 3, "LOW": 4}
@@ -8109,6 +8579,8 @@ def build_report_risk_set(c_info, results, context):
         semantic_key = risk_semantic_key(item)
         if not semantic_key or semantic_key in seen_risks:
             continue
+        item = dict(item)
+        item["semantic_key"] = semantic_key
         unique_risks.append(item)
         seen_risks.add(semantic_key)
 
@@ -8149,6 +8621,7 @@ def build_report_risk_set(c_info, results, context):
             "frameworks": item.get("frameworks", []),
             "evidence": item.get("evidence", []),
             "success_metric": item.get("success_metric", ""),
+            "semantic_key": risk_semantic_key(item),
         }
         for item in report_risks
     ]
@@ -8390,16 +8863,60 @@ def presentation_action_text(value, limit=165):
 
     selected = []
     for part in parts:
-        sentence = complete_sentence(presentation_text(part, limit))
+        sentence = complete_sentence(part)
         if not sentence:
             continue
         candidate = " ".join([*selected, sentence])
+        if len(candidate) > limit:
+            if selected:
+                break
+            clauses = [
+                clause.strip(" .;-")
+                for clause in re.split(r"[,;:]\s*", sentence)
+                if clause.strip(" .;-")
+            ]
+            compact = []
+            for clause in clauses:
+                clause_candidate = ", ".join([*compact, clause])
+                if compact and len(clause_candidate) > limit - 1:
+                    break
+                if not compact and len(clause_candidate) > limit - 1:
+                    words = clause.split()
+                    while words and len(" ".join(words)) > limit - 2:
+                        words.pop()
+                    clause_candidate = " ".join(words)
+                if clause_candidate:
+                    compact = clause_candidate.split(", ")
+            sentence = complete_sentence(", ".join(compact))
+            if not sentence:
+                continue
+            candidate = sentence
         if selected and len(candidate) > limit:
             break
         selected.append(sentence)
         if len(candidate) >= limit * 0.72:
             break
     return " ".join(selected) or complete_sentence(presentation_text(text, limit))
+
+
+def presentation_title_text(value, limit=88):
+    """Shorten a title at a semantic boundary without leaving a broken phrase."""
+    text = re.sub(r"\s+", " ", str(value or "")).strip(" .;-:")
+    if len(text) <= limit:
+        return text
+    clauses = [part.strip(" .;-:") for part in re.split(r"[,;:]\s*", text) if part.strip(" .;-:")]
+    if clauses and len(clauses[0]) <= limit:
+        return clauses[0]
+    words = text.split()
+    incomplete_tail = {
+        "и", "или", "а", "но", "с", "со", "для", "на", "по", "в", "во",
+        "к", "из", "под", "без", "при", "после", "между", "над",
+    }
+    while words and len(" ".join(words)) > limit - 1:
+        words.pop()
+    while words and words[-1].lower().strip(".,:;()") in incomplete_tail:
+        words.pop()
+    return (" ".join(words).rstrip(" .;:-") + "…") if words else "Риск требует уточнения"
 
 
 def presentation_maturity_style(score):
@@ -8418,6 +8935,18 @@ def presentation_evidence_for_key(semantic_key, results, context, item):
     servers = int(context.get("servers", 0) or 0)
     legacy_arm = int(results.get("ОС АРМ (Windows XP/Vista/7/8)", 0) or 0)
     legacy_servers = int(results.get("ОС Сервера (Windows Server 2008/2012 R2)", 0) or 0)
+    wifi_users = results.get("_user_count") or users or "не указано"
+    wifi_points = (
+        results.get("WiFi Точки")
+        or results.get("Wi-Fi Точки доступа")
+        or results.get("Количество точек доступа")
+        or "не указано"
+    )
+    wifi_controller = (
+        results.get("WiFi Контроллер")
+        or results.get("Wi-Fi Контроллер")
+        or "Нет"
+    )
     values = {
         "mfa": f"В анкете MFA: {results.get('MFA', 'Нет')}. Критичные доступы требуют подтвержденного покрытия вторым фактором.",
         "legacy_os": f"В анкете указаны устаревшие ОС: {legacy_arm} АРМ и {legacy_servers} серверов.",
@@ -8432,6 +8961,10 @@ def presentation_evidence_for_key(semantic_key, results, context, item):
         "pam": f"В анкете PAM: {results.get('PAM', 'Нет')}; серверный контур: {servers} серверов.",
         "mail": f"Почтовая система: {results.get('1.5.1. Почтовая система', 'не указана')}; Mail Security: {results.get('Mail Security', 'Нет')}.",
         "appsec": f"Разработка: {'есть' if context.get('has_development') else 'не указана'}; SAST/DAST: {results.get('SAST', 'Нет')}/{results.get('DAST', 'Нет')}.",
+        "wifi_capacity": (
+            f"Пользователей: {wifi_users}; точек доступа: {wifi_points}; "
+            f"Wi-Fi контроллер: {wifi_controller}."
+        ),
         "network_performance": f"Основной канал: {results.get('Интернет канал (осн)', 'не указан')}; резервный: {results.get('Резервный канал', 'Нет')}; маршрутизация: {results.get('Маршрутизация', 'Нет')}.",
         "segmentation": "В анкете не приведены схема VLAN/VRF, ACL и матрица межсегментных потоков; OSPF сам по себе не подтверждает сегментацию.",
         "nac": f"В анкете NAC: {results.get('NAC', 'Нет')}. Требуется подтвердить контроль допуска проводных, Wi-Fi и неизвестных устройств.",
@@ -8464,6 +8997,11 @@ def presentation_presales_profile(item):
             "impact": "Неподдерживаемые ОС повышают риск эксплуатации известных уязвимостей и ограничивают применение современных средств защиты.",
             "action": "Составить реестр устаревших ОС, согласовать миграцию и временно изолировать системы, которые нельзя обновить сразу.",
         },
+        "wifi_capacity": {
+            "title": "Wi-Fi требует проверки емкости и централизованного управления",
+            "impact": "Недостаточная плотность точек доступа и отсутствие единого управления могут вызывать перегрузку, нестабильный роуминг и снижение производительности рабочих сервисов.",
+            "action": "Провести радиообследование и замеры нагрузки, определить требуемую плотность точек доступа, затем внедрить централизованное WLAN-управление и контроль качества покрытия.",
+        },
         "network_performance": {
             "title": "Производительность сети требует подтверждения измерениями",
             "impact": "Без замеров загрузки каналов, задержек и отказоустойчивости нельзя достоверно оценить запас производительности сети.",
@@ -8478,6 +9016,21 @@ def presentation_presales_profile(item):
             "title": "Нет единого мониторинга доступности и производительности",
             "impact": "Без централизованных метрик команда поздно замечает деградацию сервисов и не может обоснованно планировать емкость.",
             "action": "Определить критичные метрики, пороги и владельцев, затем внедрить единый контроль доступности, производительности и емкости.",
+        },
+        "virtualization": {
+            "title": "Виртуальной среде требуется подтвержденный запас ресурсов",
+            "impact": "Высокая утилизация вычислительных ресурсов снижает запас на отказ хоста, рост нагрузки и обслуживание без простоя.",
+            "action": "Провести capacity-анализ, проверить сценарий отказа хоста и утвердить план расширения вычислительных ресурсов.",
+        },
+        "storage": {
+            "title": "Емкость и производительность СХД требуют измерения",
+            "impact": "Без данных о latency, IOPS, утилизации и запасе емкости нельзя подтвердить устойчивость хранения критичных данных.",
+            "action": "Провести health-check СХД, зафиксировать базовые метрики и подготовить план развития емкости и отказоустойчивости.",
+        },
+        "dr": {
+            "title": "Тестирование восстановления и RTO/RPO не формализованы",
+            "impact": "Наличие резервных копий не подтверждает, что критичные сервисы восстановятся в согласованные сроки после инцидента.",
+            "action": "Согласовать RTO/RPO, провести контрольное восстановление и утвердить регулярные DR-учения с фиксацией результата.",
         },
         "mfa": {
             "title": "Критичные доступы не полностью защищены MFA",
@@ -8570,6 +9123,7 @@ def presentation_success_metric(semantic_key):
         "web_waf": "Все публичные приложения защищены и проходят регулярную проверку",
         "pam": "Привилегированные учетные записи учтены и контролируются",
         "nac": "100% подключений идентифицируются; неизвестные устройства изолируются",
+        "wifi_capacity": "Покрытие и емкость Wi-Fi подтверждены радиообследованием; пиковая загрузка точек остается в целевых пределах",
         "dlp": "Политики DLP контролируют согласованные каналы передачи персональных данных",
         "segmentation": "Матрица VLAN/ACL подтверждена тестом межсегментного доступа",
         "mail": "Защитные политики применены ко всем почтовым ящикам",
@@ -8578,8 +9132,247 @@ def presentation_success_metric(semantic_key):
         "itam": "Не менее 95% активов имеют владельца и актуальный статус",
         "change_management": "Все продуктивные изменения имеют согласование и план отката",
         "it_monitoring": "Критичные сервисы имеют метрики, пороги и владельцев реакции",
+        "virtualization": "Запас ресурсов подтвержден для отказа одного хоста и прогнозируемого роста",
+        "storage": "Емкость и производительность контролируются по утвержденным порогам и прогнозу",
+        "dr": "Критичные сервисы проходят тест восстановления в пределах утвержденных RTO/RPO",
     }
     return metrics.get(semantic_key, "Владелец, срок и измеримый критерий результата утверждены")
+
+
+def canonical_roadmap_action(item, phase):
+    """Build one stage-appropriate action from a confirmed audit finding."""
+    key = risk_semantic_key(item)
+    actions = {
+        "legacy_os": {
+            "0-30 дней": "Изолировать или обновить устройства на неподдерживаемых ОС и утвердить срок полной миграции.",
+            "31-60 дней": "Завершить миграцию приоритетных legacy-устройств и проверить совместимость прикладного ПО.",
+            "61-90 дней": "Закрыть согласованный legacy-контур и включить контроль сроков поддержки ОС.",
+        },
+        "virtualization": {
+            "0-30 дней": "Провести capacity-анализ виртуальной среды, проверить запас на отказ одного хоста и прогноз роста нагрузки.",
+            "31-60 дней": "Утвердить план расширения вычислительных ресурсов по результатам capacity-анализа.",
+            "61-90 дней": "Выполнить приоритетный этап расширения и включить регулярный контроль загрузки виртуальной среды.",
+        },
+        "storage": {
+            "0-30 дней": "Провести health-check СХД и зафиксировать latency, IOPS, утилизацию и запас емкости.",
+            "31-60 дней": "Утвердить целевую архитектуру и план развития емкости и отказоустойчивости СХД.",
+            "61-90 дней": "Реализовать приоритетный этап развития СХД и включить контроль порогов емкости и производительности.",
+        },
+        "network_performance": {
+            "0-30 дней": "Замерить загрузку WAN-каналов, проверить failover и согласовать требования к резервной полосе и SLA.",
+            "31-60 дней": "Проверить целевую конфигурацию резервного канала и автоматическое переключение критичных сервисов.",
+            "61-90 дней": "Ввести регулярный тест failover, контроль доступности каналов и отчетность по SLA.",
+        },
+        "wifi_capacity": {
+            "0-30 дней": "Провести радиообследование Wi-Fi и замерить пиковую нагрузку, покрытие и качество роуминга.",
+            "31-60 дней": "Провести пилот централизованного WLAN-управления и подтвердить целевой радиоплан.",
+            "61-90 дней": "Масштабировать подтвержденную WLAN-архитектуру и контролировать загрузку, покрытие и роуминг.",
+        },
+        "change_management": {
+            "0-30 дней": "Описать текущий поток изменений, владельцев, точки согласования и причины неуспешных изменений.",
+            "31-60 дней": "Внедрить единый процесс согласования, тестирования и отката изменений с обязательной регистрацией.",
+            "61-90 дней": "Закрепить процесс управления изменениями метриками качества и регулярным разбором отклонений.",
+        },
+        "itam": {
+            "0-30 дней": "Определить владельцев, обязательные атрибуты активов и границы первого контура CMDB.",
+            "31-60 дней": "Провести пилот CMDB и связать критичные активы с сервисами, изменениями и SLA.",
+            "61-90 дней": "Расширить CMDB на целевой контур и включить регулярный контроль качества данных.",
+        },
+        "it_monitoring": {
+            "0-30 дней": "Определить критичные сервисы, метрики доступности и производительности, пороги и владельцев реакции.",
+            "31-60 дней": "Провести пилот единого ИТ-мониторинга на критичных сервисах и проверить правила оповещения.",
+            "61-90 дней": "Расширить мониторинг на целевой контур и включить регулярную отчетность по доступности и емкости.",
+        },
+        "backup": {
+            "0-30 дней": "Согласовать RTO/RPO и перечень критичных сервисов для контрольного восстановления.",
+            "31-60 дней": "Провести тест восстановления критичных сервисов и зафиксировать фактические RTO/RPO.",
+            "61-90 дней": "Утвердить регулярные тесты восстановления и контроль изолированных резервных копий.",
+        },
+        "dr": {
+            "0-30 дней": "Определить критичные сервисы, зависимости, владельцев и требования к аварийному восстановлению.",
+            "31-60 дней": "Провести ограниченное DR-учение и скорректировать runbook по фактическим результатам.",
+            "61-90 дней": "Утвердить DR-runbook, периодичность учений и контроль выполнения целевых RTO/RPO.",
+        },
+        "pam": {
+            "0-30 дней": "Инвентаризировать привилегированные доступы, критичные системы и границы пилота PAM.",
+            "31-60 дней": "Провести пилот PAM и проверить vault, контроль сессий, аварийный доступ и интеграцию с SIEM.",
+            "61-90 дней": "Расширить PAM на подтвержденный критичный контур и ввести регулярный пересмотр привилегий.",
+        },
+        "nac": {
+            "0-30 дней": "Описать типы подключений, требования к NAC и пилотный контур проводной и беспроводной сети.",
+            "31-60 дней": "Провести пилот NAC и проверить 802.1X, профилирование, соответствие и изоляцию устройств.",
+            "61-90 дней": "Расширить подтвержденные политики NAC и включить контроль качества допуска устройств.",
+        },
+        "dlp": {
+            "0-30 дней": "Определить категории данных, каналы контроля и измеримые критерии пилота DLP.",
+            "31-60 дней": "Провести ограниченный пилот DLP и скорректировать политики по фактическим результатам.",
+            "61-90 дней": "Масштабировать подтвержденные политики DLP и включить контроль инцидентов и исключений.",
+        },
+    }
+    if key in actions:
+        return actions[key][phase]
+
+    recommendation = item.get("recommendation") or item.get("action") or item.get("description") or item.get("risk")
+    if phase == "0-30 дней":
+        return presentation_action_text(
+            f"Подтвердить исходное состояние и границы меры: {recommendation}",
+            220,
+        )
+    if phase == "31-60 дней":
+        return presentation_action_text(recommendation, 220)
+    return presentation_action_text(
+        f"Масштабировать подтвержденную меру и включить контроль результата: {recommendation}",
+        220,
+    )
+
+
+def build_canonical_report_roadmap(report_risks, results=None, context=None, max_items=6):
+    """Create the Excel and PowerPoint roadmap from one fact-checked finding set."""
+    phase_order = ("0-30 дней", "31-60 дней", "61-90 дней")
+    preferred_phase = {
+        "legacy_os": "0-30 дней",
+        "virtualization": "0-30 дней",
+        "storage": "0-30 дней",
+        "network_performance": "0-30 дней",
+        "segmentation": "0-30 дней",
+        "change_management": "31-60 дней",
+        "wifi_capacity": "31-60 дней",
+        "patch": "31-60 дней",
+        "itam": "31-60 дней",
+        "mfa": "31-60 дней",
+        "iam": "31-60 дней",
+        "pam": "31-60 дней",
+        "nac": "31-60 дней",
+        "endpoint_detection": "31-60 дней",
+        "mail": "31-60 дней",
+        "web_waf": "31-60 дней",
+        "backup": "61-90 дней",
+        "dr": "61-90 дней",
+        "it_monitoring": "61-90 дней",
+        "siem_soc": "61-90 дней",
+        "dlp": "61-90 дней",
+        "appsec": "61-90 дней",
+    }
+    level_priority = {
+        "CRITICAL": "P1", "КРИТИЧЕСКИЙ": "P1",
+        "HIGH": "P1", "ВЫСОКИЙ": "P1",
+        "MEDIUM": "P2", "СРЕДНИЙ": "P2",
+        "LOW": "P3", "НИЗКИЙ": "P3",
+    }
+    domain_by_key = {
+        "legacy_os": "Конечные устройства",
+        "virtualization": "ИТ-инфраструктура",
+        "storage": "Хранение данных",
+        "network_performance": "Сеть и связь",
+        "wifi_capacity": "Корпоративный Wi-Fi",
+        "change_management": "ИТ-процессы",
+        "itam": "Учет активов и сервисов",
+        "it_monitoring": "ИТ-мониторинг",
+        "backup": "Резервное копирование",
+        "dr": "Непрерывность",
+        "pam": "Привилегированный доступ",
+        "nac": "Сетевой доступ",
+        "dlp": "Защита данных",
+    }
+    phase_counts = {phase: 0 for phase in phase_order}
+    roadmap = []
+    seen = set()
+
+    roadmap_key_order = {
+        "legacy_os": 0,
+        "network_performance": 1,
+        "wifi_capacity": 2,
+        "virtualization": 3,
+        "storage": 4,
+        "dr": 5,
+        "it_monitoring": 6,
+        "change_management": 7,
+        "itam": 8,
+    }
+    ordered_risks = sorted(
+        [item for item in (report_risks or []) if isinstance(item, dict)],
+        key=lambda item: roadmap_key_order.get(risk_semantic_key(item), 50),
+    )
+
+    for raw_item in ordered_risks:
+        if not isinstance(raw_item, dict):
+            continue
+        item = dict(raw_item)
+        key = risk_semantic_key(item)
+        if not key or key in seen:
+            continue
+        preferred = preferred_phase.get(key, "31-60 дней")
+        preferred_index = phase_order.index(preferred)
+        candidates = [
+            *phase_order[preferred_index:],
+            *reversed(phase_order[:preferred_index]),
+        ]
+        phase = next((candidate for candidate in candidates if phase_counts[candidate] < 2), None)
+        if phase is None:
+            break
+        level = str(item.get("level", "MEDIUM")).strip().upper()
+        priority = level_priority.get(level, "P2")
+        area = str(item.get("area") or item.get("_ai_area") or "ИТ/ИБ").strip().upper()
+        if area not in {"ИТ", "ИБ", "ИТ/ИБ"}:
+            area = "ИТ" if key in {
+                "legacy_os", "network_performance", "wifi_capacity", "virtualization",
+                "storage", "dr", "it_monitoring", "change_management", "itam",
+            } else "ИБ"
+        metric = item.get("success_metric") or presentation_success_metric(key)
+        rationale = item.get("impact") or item.get("description") or "Мера снижает подтвержденный риск аудита."
+        roadmap.append({
+            "phase": phase,
+            "priority": priority,
+            "domain": domain_by_key.get(key, area),
+            "action": canonical_roadmap_action(item, phase),
+            "rationale": presentation_action_text(rationale, 240),
+            "owner": "ИТ" if area == "ИТ" else ("ИБ" if area == "ИБ" else "ИТ/ИБ"),
+            "effort": "Высокая" if key in {"virtualization", "storage", "siem_soc", "pam", "iam"} else "Средняя",
+            "result": presentation_action_text(metric, 155),
+            "semantic_key": key,
+        })
+        seen.add(key)
+        phase_counts[phase] += 1
+        if len(roadmap) >= max_items:
+            break
+
+    # Keep a six-position management timeline readable when there are only five
+    # distinct findings. The continuation must advance an existing action rather
+    # than introduce an unconfirmed topic.
+    if roadmap and len(roadmap) < max_items:
+        for phase in phase_order:
+            while phase_counts[phase] < 2 and len(roadmap) < max_items:
+                candidate = next(
+                    (
+                        item for item in roadmap
+                        if item["semantic_key"] not in {
+                            existing["semantic_key"]
+                            for existing in roadmap
+                            if existing["phase"] == phase
+                        }
+                    ),
+                    None,
+                )
+                if candidate is None:
+                    break
+                source = next(
+                    item for item in report_risks
+                    if isinstance(item, dict) and risk_semantic_key(item) == candidate["semantic_key"]
+                )
+                roadmap.append({
+                    **candidate,
+                    "phase": phase,
+                    "action": canonical_roadmap_action(source, phase),
+                })
+                phase_counts[phase] += 1
+
+    return sorted(
+        roadmap,
+        key=lambda item: (
+            phase_order.index(item["phase"]),
+            {"P1": 0, "P2": 1, "P3": 2}.get(item["priority"], 9),
+        ),
+    )
 
 
 def presentation_severity_style(level):
@@ -8623,6 +9416,7 @@ def presentation_recommendation_entry(item, regulatory_profile=None, results=Non
         "web_waf": "Защита публичных веб-сервисов",
         "pam": "Контроль привилегированных доступов",
         "nac": "Контроль допуска устройств к сети",
+        "wifi_capacity": "Емкость и управляемость корпоративного Wi-Fi",
         "network_performance": "Управляемость и производительность сети",
         "itam": "Управление программными активами",
         "change_management": "Управление изменениями и конфигурациями",
@@ -8633,7 +9427,7 @@ def presentation_recommendation_entry(item, regulatory_profile=None, results=Non
         raw_title = profile["title"]
     elif raw_title.lower() in generic_titles:
         raw_title = title_by_key.get(semantic_key, "Практическая мера улучшения")
-    title = presentation_text(raw_title, 78)
+    title = presentation_title_text(raw_title, 88)
     action = (
         presentation_action_text(normalized["recommendation"], 190)
         if ai_authored
@@ -8652,8 +9446,10 @@ def presentation_recommendation_entry(item, regulatory_profile=None, results=Non
     evidence_values = normalized.get("evidence", [])
     if not isinstance(evidence_values, list):
         evidence_values = [evidence_values] if evidence_values else []
-    evidence = "; ".join(str(value).strip() for value in evidence_values if str(value).strip())
-    if results is not None and context is not None and not (ai_authored and evidence):
+    evidence = normalized.get("description") or "; ".join(
+        str(value).strip() for value in evidence_values if str(value).strip()
+    )
+    if results is not None and context is not None and not evidence:
         evidence = presentation_evidence_for_key(semantic_key, results, context, item)
     elif not evidence:
         evidence = normalized.get("description") or normalized.get("impact") or "Основание приоритета требует уточнения"
@@ -8697,8 +9493,8 @@ def presentation_risk_entry(item):
     raw_level, fill_color, text_color = presentation_severity_style(normalized.get("level"))
     return {
         "level": presentation_text(risk_level_label(raw_level), 16).upper(),
-        "title": profile.get("title") or presentation_text(
-            normalized.get("risk", "Риск требует внимания"), 58
+        "title": profile.get("title") or presentation_title_text(
+            normalized.get("risk", "Риск требует внимания"), 88
         ),
         "impact": profile.get("impact") or presentation_action_text(
             normalized.get("impact") or normalized.get("description") or "Требуется уточнить влияние риска.",
@@ -8753,19 +9549,13 @@ def build_audit_presentation_replacements(c_info, results, final_score, it_matur
         regulatory_profile,
     )
     domain_scores = calculate_domain_scores(results)
-    ai_risk_sources = [
-        item
-        for item in st.session_state.get("last_report_risk_sources", [])
-        if str(item.get("source", "")).strip().lower() == "ии"
-    ]
-    # The customer deck is authored by AI. Deterministic rules validate facts and
-    # remain available to internal reports, but do not inject customer-facing risks.
-    risk_sources = ai_risk_sources
+    # Excel and PowerPoint consume one canonical, fact-checked audit set. AI remains
+    # mandatory for the customer deck, while expert rules may complete its coverage.
+    risk_sources = list(st.session_state.get("last_report_risk_sources", []))
     ai_narrative = sanitize_ai_audit_narrative(
         st.session_state.get("ai_audit_narrative", {}),
         results,
     )
-    roadmap_items = ai_narrative.get("roadmap", [])
     summary_items = []
     narrative_summary = [
         *ai_narrative.get("executive_summary", []),
@@ -8798,14 +9588,14 @@ def build_audit_presentation_replacements(c_info, results, final_score, it_matur
             continue
         if risk_conflicts_with_answers(source_item, results):
             continue
-        item = enforce_audit_fact_policy(source_item, results, context)
-        item = professionalize_risk_item(item, results, context)
-        item = align_report_vendors(item, results, context)
-        if not isinstance(item, dict):
-            continue
+        # The expert XLSX and presentation consume the same already normalized
+        # finding. Re-running semantic enrichment here can change a WAN finding
+        # into Backup or an IT-monitoring finding into Virtualization.
+        item = dict(source_item)
         normalized_risks.append({
             "level": risk_level_label(item.get("level", "MEDIUM")),
             "risk": item.get("risk", "Риск"),
+            "description": item.get("description") or item.get("impact") or "Требуется уточнение основания",
             "impact": item.get("impact") or item.get("description") or "Требуется уточнение влияния",
             "recommendation": item.get("recommendation") or item.get("action") or "Требуется план улучшений",
             "vendors": item.get("vendors", []),
@@ -8815,6 +9605,7 @@ def build_audit_presentation_replacements(c_info, results, final_score, it_matur
             "evidence": item.get("evidence", []),
             "success_metric": item.get("success_metric", ""),
             "source": item.get("source", ""),
+            "semantic_key": risk_semantic_key(item),
         })
     severity_order = {"CRITICAL": 0, "КРИТИЧЕСКИЙ": 0, "HIGH": 1, "ВЫСОКИЙ": 1, "MEDIUM": 2, "СРЕДНИЙ": 2, "LOW": 3, "НИЗКИЙ": 3}
     normalized_risks.sort(key=lambda item: severity_order.get(str(item.get("level", "MEDIUM")).upper(), 2))
@@ -8829,6 +9620,16 @@ def build_audit_presentation_replacements(c_info, results, final_score, it_matur
         risk_keys.add(dedupe_key)
         deduplicated_risks.append(item)
     normalized_risks = deduplicated_risks[:12]
+
+    for item in normalized_risks:
+        candidate = presentation_action_text(
+            f"{item.get('risk', '')}: {item.get('impact') or item.get('description') or ''}",
+            220,
+        )
+        if candidate and candidate not in summary_items:
+            summary_items.append(candidate)
+        if len(summary_items) >= 4:
+            break
 
     recommendation_items = []
     recommendation_keys = set()
@@ -8849,78 +9650,24 @@ def build_audit_presentation_replacements(c_info, results, final_score, it_matur
     for item in normalized_risks:
         add_recommendation(item)
 
-    roadmap_by_phase = {
-        "0-30": [],
-        "31-60": [],
-        "61-90": [],
-    }
-    def staged_roadmap_action(entry, phase):
-        key = entry["key"]
-        title = entry["title"].lower()
-        specific = {
-            "pam": {
-                "0-30": "Инвентаризировать привилегированные доступы, определить критичные системы и границы пилота PAM.",
-                "31-60": "Провести пилот PAM; проверить vault, контроль сессий, аварийный доступ и передачу событий в SIEM.",
-                "61-90": "Расширить PAM на подтвержденный критичный контур и ввести регулярный пересмотр привилегий.",
-            },
-            "nac": {
-                "0-30": "Описать типы подключений, требования к NAC и пилотный контур для проводной и беспроводной сети.",
-                "31-60": "Провести пилот NAC; проверить 802.1X, профилирование, контроль соответствия и изоляцию устройств.",
-                "61-90": "Расширить подтвержденные политики NAC и включить контроль качества допуска устройств.",
-            },
-            "iam": {
-                "0-30": "Описать прием, перевод и увольнение, владельцев ролей и требования к интеграциям IAM.",
-                "31-60": "Провести PoC IAM на выбранных подразделениях и критичных бизнес-системах.",
-                "61-90": "Масштабировать подтвержденные процессы IAM и ввести контроль SLA создания и отзыва прав.",
-            },
-            "dlp": {
-                "0-30": "Определить категории персональных данных, каналы контроля и измеримые критерии пилота DLP.",
-                "31-60": "Провести ограниченный пилот DLP на согласованных каналах и скорректировать политики по результатам.",
-                "61-90": "Масштабировать подтвержденные политики DLP и включить регулярный контроль инцидентов и исключений.",
-            },
-        }
-        if key in specific:
-            return specific[key][phase]
-        if phase == "0-30":
-            return f"Подтвердить текущее состояние по теме «{title}», согласовать требования, владельца и границы пилота."
-        if phase == "31-60":
-            return sanitize_customer_roadmap_text(entry["action"])
-        return f"Масштабировать подтвержденную меру «{title}» и включить регулярный контроль результата."
-
-    recommendation_by_key = {
-        entry["key"]: entry for entry in recommendation_items if entry.get("key")
-    }
-    roadmap_keys_by_phase = {phase: set() for phase in roadmap_by_phase}
-    for item in roadmap_items:
-        phase = str(item.get("phase", ""))
-        phase_key = next((key for key in roadmap_by_phase if key in phase), None)
+    canonical_roadmap = build_canonical_report_roadmap(
+        normalized_risks,
+        results=results,
+        context=context,
+    )
+    roadmap_by_phase = {"0-30": [], "31-60": [], "61-90": []}
+    for item in canonical_roadmap:
+        phase_key = next(
+            (key for key in roadmap_by_phase if key in str(item.get("phase", ""))),
+            None,
+        )
         if not phase_key:
             continue
-        raw_action = sanitize_customer_roadmap_text(item.get("action") or item.get("recommendation"))
-        roadmap_key = risk_semantic_key({"risk": raw_action, "recommendation": raw_action})
-        entry = recommendation_by_key.get(roadmap_key)
-        if not entry or roadmap_key in roadmap_keys_by_phase[phase_key]:
-            continue
         roadmap_by_phase[phase_key].append({
-            "action": presentation_action_text(staged_roadmap_action(entry, phase_key), 120),
-            "result": presentation_action_text(entry["metric"], 90),
-            "key": roadmap_key,
+            "action": presentation_action_text(item.get("action"), 145),
+            "result": presentation_action_text(item.get("result"), 110),
+            "key": item.get("semantic_key"),
         })
-        roadmap_keys_by_phase[phase_key].add(roadmap_key)
-
-    for phase in ("0-30", "31-60", "61-90"):
-        for entry in recommendation_items:
-            if len(roadmap_by_phase[phase]) >= 2:
-                break
-            if entry["key"] in roadmap_keys_by_phase[phase]:
-                continue
-            action = presentation_action_text(staged_roadmap_action(entry, phase), 120)
-            roadmap_by_phase[phase].append({
-                "action": action,
-                "result": presentation_action_text(entry["metric"], 90),
-                "key": entry["key"],
-            })
-            roadmap_keys_by_phase[phase].add(entry["key"])
 
     enabled_controls, _ = security_control_snapshot(results)
     strengths = [presentation_text(item, 105) for item in enabled_controls[:4]]
@@ -9009,8 +9756,22 @@ def build_audit_presentation_replacements(c_info, results, final_score, it_matur
         replacements[f"LAW_{index}_SCOPE"] = presentation_text(law.get("scope", ""), 150)
         replacements[f"LAW_{index}_STATUS"] = presentation_text(law.get("status", ""), 48)
 
+    summary_fallbacks = [
+        f"Профиль инфраструктуры: {profile_title.lower()}.",
+        f"Приоритетный резерв улучшения: {normalized_risks[0]['risk']}." if normalized_risks else "Критичные дополнительные разрывы по анкете не подтверждены.",
+        "Очередность мер учитывает влияние на непрерывность сервисов и подтвержденные факты анкеты.",
+    ]
+    for fallback in summary_fallbacks:
+        clean_fallback = presentation_action_text(fallback, 220)
+        if clean_fallback and clean_fallback not in summary_items:
+            summary_items.append(clean_fallback)
+
     for index in range(6):
-        replacements[f"SUMMARY_{index + 1}"] = summary_items[index] if index < len(summary_items) else "Приоритеты определены по подтвержденным данным анкеты."
+        replacements[f"SUMMARY_{index + 1}"] = (
+            summary_items[index]
+            if index < len(summary_items)
+            else "Дополнительный вывод не требуется: существенный отдельный разрыв не подтвержден."
+        )
         if index < len(normalized_risks):
             risk = normalized_risks[index]
         elif index < len(recommendation_items):
@@ -9041,10 +9802,19 @@ def build_audit_presentation_replacements(c_info, results, final_score, it_matur
                 205,
             )
 
+    fallback_decisions = [
+        presentation_action_text(
+            f"Утвердить план по направлению «{entry['title']}»: {entry['action']}",
+            205,
+        )
+        for entry in recommendation_items[:4]
+    ]
     for index in range(4):
         replacements.setdefault(
             f"DECISION_{index + 1}",
-            "Поддерживать достигнутый уровень контроля и регулярно пересматривать остаточные риски.",
+            fallback_decisions[index]
+            if index < len(fallback_decisions)
+            else "Утвердить владельца контроля, целевой показатель и периодичность проверки результата.",
         )
 
     replacements["__RECOMMENDATION_COUNT__"] = len(recommendation_items)
@@ -9442,16 +10212,12 @@ def make_expert_excel(c_info, results, final_score):
     report_risks, ai_used = build_report_risk_set(c_info, results, context)
     ai_narrative = st.session_state.get("ai_audit_narrative", {}) if ai_used else {}
     ai_narrative = sanitize_ai_audit_narrative(ai_narrative, results)
-    top_risks = generate_rule_based_risks(
-        results,
-        context
+    roadmap_items = build_canonical_report_roadmap(
+        report_risks,
+        results=results,
+        context=context,
     )
-    roadmap_items = ai_narrative.get("roadmap") or build_contextual_roadmap(
-        results,
-        context,
-        domain_scores,
-        top_risks
-    )
+    st.session_state.last_report_roadmap = list(roadmap_items)
     expert_conclusion = build_expert_conclusion(
         results,
         context,
@@ -10874,6 +11640,15 @@ it_maturity_score = calculate_it_maturity_score(
     dev_count,
     sel_langs,
     cicd_active,
+    wifi_enabled=wifi_enabled,
+    wifi_ctrl_enabled=wifi_ctrl_enabled,
+    operational_notes=[
+        st.session_state.get("note_1_1", ""),
+        st.session_state.get("note_1_2", ""),
+        st.session_state.get("note_1_3", ""),
+        st.session_state.get("note_1_4", ""),
+        st.session_state.get("note_1_5", ""),
+    ],
 )
 
 section_statuses = [
