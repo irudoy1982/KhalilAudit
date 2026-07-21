@@ -45,7 +45,21 @@ def check_version() -> None:
     text = read_text(APP)
     match = re.search(r'APP_VERSION\s*=\s*"([^"]+)"', text)
     assert_true(match is not None, "APP_VERSION is missing")
-    assert_true(match.group(1) == "12.31", f"Unexpected APP_VERSION: {match.group(1)}")
+    assert_true(match.group(1) == "12.33", f"Unexpected APP_VERSION: {match.group(1)}")
+
+
+def check_forced_light_theme() -> None:
+    config = ROOT / ".streamlit" / "config.toml"
+    assert_true(config.exists(), "Streamlit theme config is missing")
+    config_text = config.read_text(encoding="utf-8")
+    app_text = read_text(APP)
+    assert_true('base = "light"' in config_text, "Streamlit must use the light base theme")
+    assert_true('backgroundColor = "#F6F7F9"' in config_text, "Light background is not configured")
+    assert_true("color-scheme: only light" in app_text, "Android auto-dark protection is missing")
+    assert_true(
+        "@media (max-width: 900px)" in app_text and "position: sticky" in app_text,
+        "Touch devices must use the viewport-safe sticky draft toolbar",
+    )
 
 
 def check_customer_changelog() -> None:
@@ -808,6 +822,7 @@ def main() -> None:
     checks = [
         check_compile,
         check_version,
+        check_forced_light_theme,
         check_customer_changelog,
         check_selectbox_contract,
         check_portfolio,

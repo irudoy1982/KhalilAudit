@@ -3,11 +3,13 @@
 This changelog is intended for production release notes that can be shown to customers.
 Keep this file focused only on customer-visible questionnaire and report changes.
 
-## v12.30
+## v12.33
 
 Status: stable production release.
 
 Planned customer-visible improvement:
+- Improved the mobile draft toolbar so Android browsers cannot clip the questionnaire when calculating the viewport incorrectly.
+- Stabilized the light interface on Android devices using a system-wide dark theme.
 - Fixed PowerPoint compatibility when an audit contains more than eight recommendations.
 - Preserved questionnaire-confirmed WAN resilience and IT-monitoring findings even when an analysis response omits them.
 - Reordered the 90-day plan around immediate risk reduction, followed by pilots and controlled rollout.
