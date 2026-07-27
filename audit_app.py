@@ -121,7 +121,7 @@ def get_app_secret(name, default=None):
 
 
 APP_INSTANCE_DEFAULT = "Khalil"
-APP_VERSION = "14.2"
+APP_VERSION = "14.2.1"
 
 
 def get_app_instance_label():
