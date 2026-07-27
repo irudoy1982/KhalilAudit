@@ -16,6 +16,18 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from datetime import datetime
 
+import crm_admin as crm_admin_module
+from crm_delivery import DeliveryArtifact, deliver_audit_to_active_crm
+
+is_admin_request = crm_admin_module.is_admin_request
+load_runtime_settings = crm_admin_module.load_runtime_settings
+render_crm_admin = crm_admin_module.render_crm_admin
+load_runtime_asset_bytes = getattr(
+    crm_admin_module,
+    "load_runtime_asset_bytes",
+    lambda _secret_getter, _asset_key: None,
+)
+
 REQUEST_VERIFY = True
 
 
@@ -65,7 +77,7 @@ def sanitize_for_ai(c_info, results):
 
 def load_vendor_matrix():
     try:
-        df = pd.read_excel("Портфель для отчета.xlsx")
+        df = read_active_vendor_matrix()
 
         vendors_text = ""
 
@@ -86,9 +98,10 @@ def load_vendor_names():
         detailed = load_detailed_vendor_names()
         if detailed:
             return detailed
-        df = pd.read_excel("Портфель для отчета.xlsx", header=None)
+        df = read_active_vendor_matrix()
         values = []
-        for value in df.iloc[:, 0].dropna().tolist():
+        vendor_column = "Vendor" if "Vendor" in df.columns else df.columns[0]
+        for value in df[vendor_column].dropna().tolist():
             vendor = str(value).strip()
             if vendor and vendor.lower() not in {"nan", "none"}:
                 values.append(vendor)
@@ -99,13 +112,16 @@ def load_vendor_names():
 
 def get_app_secret(name, default=None):
     try:
-        return st.secrets.get(name, default)
+        secret_value = st.secrets.get(name)
+        if secret_value is not None:
+            return secret_value
     except Exception:
-        return default
+        pass
+    return os.environ.get(name, default)
 
 
 APP_INSTANCE_DEFAULT = "Khalil"
-APP_VERSION = "12.33"
+APP_VERSION = "14.1"
 
 
 def get_app_instance_label():
@@ -274,8 +290,39 @@ def telegram_send_node(token, method, fields, files=None, timeout_seconds=10):
         return response.json()
 
 
+def get_runtime_setting(name, default=None):
+    settings = globals().get("RUNTIME_SETTINGS", {})
+    return settings.get(name, default) if isinstance(settings, dict) else default
+
+
+def render_message_template(template, values):
+    class SafeValues(dict):
+        def __missing__(self, key):
+            return "{" + str(key) + "}"
+
+    return str(template or "").format_map(SafeValues(values))
+
+
 def build_telegram_lead_text(client_info, final_score, sales_digest):
     ai_provider = str(st.session_state.get("ai_provider_used", "Не определен")).strip() or "Не определен"
+    template = str(get_runtime_setting("telegram_lead_template", "") or "").strip()
+    if template:
+        return render_message_template(
+            template,
+            {
+                "app": get_app_instance_label(),
+                "company": client_info.get("Наименование компании", "-"),
+                "city": client_info.get("Город", "-"),
+                "industry": client_info.get("Сфера деятельности", "-"),
+                "email": client_info.get("Email", "-"),
+                "phone": client_info.get("Контактный телефон", "-"),
+                "contact": client_info.get("ФИО контактного лица", "-"),
+                "role": client_info.get("Должность", "-"),
+                "score": final_score,
+                "ai": ai_provider,
+                "sales_digest": sales_digest,
+            },
+        )
     return (
         "🚨 Новый запрос на аудит!\n"
         f"📌 Приложение: {get_app_instance_label()}\n"
@@ -348,7 +395,9 @@ def build_telegram_generation_error_text(client_info, final_score, error):
     )
 
 
-def send_internal_telegram_message(text, timeout_seconds=8):
+def send_internal_telegram_message(text, timeout_seconds=8, diagnostic=True):
+    if diagnostic and not bool(get_runtime_setting("telegram_diagnostics_enabled", True)):
+        return "disabled"
     if not TOKEN or not CHAT_ID:
         return "Telegram не отправлен: не найдены TELEGRAM_TOKEN или TELEGRAM_CHAT_ID."
 
@@ -3837,19 +3886,21 @@ def inject_audit_design():
     }
 
     .st-key-presentation_download,
-    div[data-testid="stElementContainer"]:has(.st-key-presentation_download) {
+    .st-key-customer_excel_download,
+    div[data-testid="stElementContainer"]:has(.st-key-presentation_download),
+    div[data-testid="stElementContainer"]:has(.st-key-customer_excel_download) {
         width: min(460px, 100%) !important;
         max-width: 460px !important;
         margin: 18px auto 10px auto !important;
         box-sizing: border-box;
     }
 
-    .st-key-presentation_download [data-testid="stDownloadButton"] {
+    :is(.st-key-presentation_download, .st-key-customer_excel_download) [data-testid="stDownloadButton"] {
         width: 100% !important;
         max-width: 100% !important;
     }
 
-    .st-key-presentation_download [data-testid="stDownloadButton"] button {
+    :is(.st-key-presentation_download, .st-key-customer_excel_download) [data-testid="stDownloadButton"] button {
         width: 100% !important;
         max-width: 100% !important;
         box-sizing: border-box;
@@ -3864,7 +3915,7 @@ def inject_audit_design():
         transition: background 160ms ease, color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
     }
 
-    .st-key-presentation_download [data-testid="stDownloadButton"] button:hover {
+    :is(.st-key-presentation_download, .st-key-customer_excel_download) [data-testid="stDownloadButton"] button:hover {
         background: #0b5f59;
         color: #ffffff;
         border-color: #0b5f59;
@@ -3872,24 +3923,24 @@ def inject_audit_design():
         transform: translateY(-2px);
     }
 
-    .st-key-presentation_download [data-testid="stDownloadButton"] button:active {
+    :is(.st-key-presentation_download, .st-key-customer_excel_download) [data-testid="stDownloadButton"] button:active {
         transform: translateY(0);
         box-shadow: 0 7px 16px rgba(15, 118, 110, 0.20);
     }
 
-    .st-key-presentation_download [data-testid="stDownloadButton"] button:focus-visible {
+    :is(.st-key-presentation_download, .st-key-customer_excel_download) [data-testid="stDownloadButton"] button:focus-visible {
         outline: 3px solid rgba(15, 118, 110, 0.24);
         outline-offset: 3px;
     }
 
-    .st-key-presentation_download [data-testid="stDownloadButton"] button p {
+    :is(.st-key-presentation_download, .st-key-customer_excel_download) [data-testid="stDownloadButton"] button p {
         display: flex;
         align-items: center;
         justify-content: center;
         gap: 10px;
     }
 
-    .st-key-presentation_download [data-testid="stDownloadButton"] button p::before {
+    :is(.st-key-presentation_download, .st-key-customer_excel_download) [data-testid="stDownloadButton"] button p::before {
         content: "↓";
         display: inline-flex;
         align-items: center;
@@ -4039,13 +4090,15 @@ def inject_audit_design():
 
 
 def get_logo_data_uri(path="logo.png"):
-    if not os.path.exists(path):
-        return ""
-
-    with open(path, "rb") as logo_file:
-        encoded = base64.b64encode(logo_file.read()).decode("ascii")
-
-    return f"data:image/png;base64,{encoded}"
+    logo_bytes = globals().get("ACTIVE_LOGO_BYTES")
+    if not logo_bytes:
+        if not os.path.exists(path):
+            return ""
+        with open(path, "rb") as logo_file:
+            logo_bytes = logo_file.read()
+    mime_type = "image/jpeg" if logo_bytes[:3] == b"\xff\xd8\xff" else "image/png"
+    encoded = base64.b64encode(logo_bytes).decode("ascii")
+    return f"data:{mime_type};base64,{encoded}"
 
 
 def render_app_header():
@@ -4852,7 +4905,7 @@ def render_generation_guard(active):
     components.html(f"""
     <script>
     const target = window.parent;
-    const message = "Экспертная презентация формируется. Это может занять до 4 минут. Не закрывайте и не обновляйте страницу.";
+    const message = "Экспертное заключение формируется. Это может занять до 4 минут. Не закрывайте и не обновляйте страницу.";
 
     if (!target.__khalilBeforeUnloadHandler) {{
       target.__khalilBeforeUnloadHandler = (event) => {{
@@ -4881,7 +4934,7 @@ def render_generation_live_panel(stage_title, active_step=0):
         "Сопоставление масштаба инфраструктуры",
         "Расчет зрелости ИТ/ИБ",
         "Формирование экспертного заключения",
-        "Сборка презентации и плана действий",
+        "Сборка заключения и плана действий",
         "Отправка результата",
     ]
     step_items = []
@@ -4998,6 +5051,20 @@ def render_generation_live_panel(stage_title, active_step=0):
 
 inject_audit_design()
 
+if is_admin_request():
+    render_crm_admin(APP_VERSION, get_app_secret)
+    st.stop()
+
+RUNTIME_SETTINGS = load_runtime_settings(get_app_secret)
+CUSTOMER_DELIVERY_FORMAT = str(
+    RUNTIME_SETTINGS.get("customer_delivery_format", "pptx") or "pptx"
+).lower()
+ACTIVE_LOGO_BYTES = load_runtime_asset_bytes(get_app_secret, "logo")
+ACTIVE_PRESENTATION_TEMPLATE_BYTES = load_runtime_asset_bytes(
+    get_app_secret, "presentation_template"
+)
+ACTIVE_VENDOR_MATRIX_BYTES = load_runtime_asset_bytes(get_app_secret, "vendor_matrix")
+
 # Якорь для принудительного перехода в начало страницы
 st.markdown("<div id='top'></div>", unsafe_allow_html=True)
 # --- НАСТРОЙКИ TELEGRAM (из Secrets) ---
@@ -5013,17 +5080,31 @@ render_floating_draft_save()
 # --- ИНСТРУКЦИЯ ДЛЯ ПОЛЬЗОВАТЕЛЯ ---
 with st.expander("Инструкция по заполнению", expanded=False):
     st.markdown("""
-    ### Как пройти анкету
+    ### Заполните анкету за 7-10 минут
 
-    1. **Начните с обязательного минимума:** заполните общую информацию о компании и блок **Конечные точки (АРМ)**. У заказчика почти всегда есть рабочие станции, поэтому этот блок не отключается и нужен для получения отчета.
-    2. **Включайте только реальные разделы:** сеть, серверы, виртуализация, СХД, внутренние системы, ИБ и разработка открываются тумблерами. Если раздел включен, его вложенные обязательные поля нужно заполнить.
-    3. **Смотрите навигатор слева:** красная точка означает, что раздел требует внимания, зеленая - раздел выглядит заполненным, серая - раздел отключен и не участвует в анкете.
-    4. **Исправляйте по подсказкам на месте:** под каждым крупным блоком есть панель “что исправить”. Она показывает конкретные недостающие поля именно для этого раздела.
-    5. **Используйте предварительную аналитику:** блок “Предварительная аналитика” показывает сводку аудита и быстрые улучшения еще до формирования финального отчета. Полную версию можно раскрыть ниже.
-    6. **Сохраняйте черновик при совместном заполнении:** скачайте JSON-черновик и передайте его коллеге. Он сможет загрузить файл в этом же блоке и продолжить заполнение с сохраненных ответов.
-    7. **Не закрывайте страницу во время отчета:** формирование экспертного отчета может занять до 4 минут. Пока идет генерация, не обновляйте и не закрывайте вкладку.
+    1. **Начните с компании и конечных точек (АРМ).** Эти два раздела обязательны: укажите контакты, сферу деятельности, количество рабочих мест и используемые ОС.
+    2. **Включайте разделы по факту наличия.** Сеть, серверы, виртуализация, СХД, внутренние системы, ИБ и разработка открываются тумблерами. Если раздел включен, заполните обязательные поля внутри него.
+    3. **Следите за навигатором слева.** Красная точка - раздел требует внимания, зеленая - заполнен, серая - отключен и не участвует в анализе. Готовность анкеты должна достигнуть 100%.
+    4. **Проверяйте факты, а не желаемое состояние.** Указывайте то, что работает сейчас. Планы, ограничения и спорные моменты добавляйте в поля «Примечание».
+    5. **Используйте подсказки разделов.** Панель «что исправить» показывает конкретные незаполненные или противоречивые поля.
+    6. **Посмотрите предварительный анализ.** Он показывает первые наблюдения, домены внимания и быстрые улучшения до формирования итогового заключения.
 
-    Поля “Примечание” необязательны, но помогают эксперту точнее описать контекст, ограничения и планы развития инфраструктуры.
+    ### Черновик и совместное заполнение
+
+    - Кнопка **«Сохранить черновик»** скачивает JSON-файл с текущими ответами.
+    - Чтобы продолжить позже, раскройте блок **«Черновик анкеты»** вверху страницы, загрузите JSON и нажмите **«Применить загруженный черновик»**.
+    - Кнопка **«Поделиться»** создает ссылку на заполненную анкету. Передавайте ее только доверенному коллеге: ссылка или JSON могут содержать контактные и технические сведения.
+    - Перед передачей коллеге сохраните свежий черновик. После его изменений загрузите последнюю полученную версию, чтобы не потерять ответы.
+
+    ### Перед формированием заключения
+
+    1. Убедитесь, что готовность анкеты - 100%, а счетчик ошибок равен нулю.
+    2. Еще раз проверьте количества, выбранные технологии и отметки «есть/нет».
+    3. Нажмите **«Сформировать презентацию аудита»** только один раз.
+    4. Формирование может занять до 4 минут. Не обновляйте страницу, не закрывайте вкладку и не нажимайте кнопку повторно.
+    5. После завершения появится кнопка скачивания заключения. Формат результата определяется настройками сервиса.
+
+    Не вводите в анкету пароли, API-ключи, токены, закрытые ключи и другие секреты. Достаточно названий технологий, количественных показателей и описания действующих процессов.
     """)
 
 render_draft_tools()
@@ -6404,11 +6485,17 @@ def clean_vendor_display_name(value):
 DETAILED_VENDOR_MATRIX_FILE = "vendor_matrix_detailed.xlsx"
 
 
+def read_active_vendor_matrix():
+    matrix_bytes = globals().get("ACTIVE_VENDOR_MATRIX_BYTES")
+    source = BytesIO(matrix_bytes) if matrix_bytes else DETAILED_VENDOR_MATRIX_FILE
+    return pd.read_excel(source)
+
+
 def load_detailed_vendor_names():
     try:
-        if not os.path.exists(DETAILED_VENDOR_MATRIX_FILE):
+        if not globals().get("ACTIVE_VENDOR_MATRIX_BYTES") and not os.path.exists(DETAILED_VENDOR_MATRIX_FILE):
             return []
-        df = pd.read_excel(DETAILED_VENDOR_MATRIX_FILE)
+        df = read_active_vendor_matrix()
         if df.empty or "Vendor" not in df.columns:
             return []
         values = []
@@ -6423,9 +6510,9 @@ def load_detailed_vendor_names():
 
 def load_detailed_solution_vendor_map():
     try:
-        if not os.path.exists(DETAILED_VENDOR_MATRIX_FILE):
+        if not globals().get("ACTIVE_VENDOR_MATRIX_BYTES") and not os.path.exists(DETAILED_VENDOR_MATRIX_FILE):
             return {}
-        df = pd.read_excel(DETAILED_VENDOR_MATRIX_FILE)
+        df = read_active_vendor_matrix()
         if df.empty or "Vendor" not in df.columns:
             return {}
 
@@ -6462,9 +6549,9 @@ def split_portfolio_list(value):
 
 def load_verified_distributor_map():
     try:
-        if not os.path.exists(DETAILED_VENDOR_MATRIX_FILE):
+        if not globals().get("ACTIVE_VENDOR_MATRIX_BYTES") and not os.path.exists(DETAILED_VENDOR_MATRIX_FILE):
             return {}
-        df = pd.read_excel(DETAILED_VENDOR_MATRIX_FILE)
+        df = read_active_vendor_matrix()
         if df.empty or "Vendor" not in df.columns:
             return {}
 
@@ -10224,20 +10311,24 @@ def render_audit_presentation_template(template_path, replacements):
 
 def make_audit_presentation(c_info, results, final_score, it_maturity_score):
     brand_key = presentation_brand_key()
-    template_path = os.path.join(
-        os.path.dirname(__file__),
-        "static",
-        f"audit_presentation_{brand_key}.pptx",
-    )
-    if not os.path.exists(template_path):
-        raise FileNotFoundError(f"Не найден шаблон презентации: {template_path}")
+    active_template = globals().get("ACTIVE_PRESENTATION_TEMPLATE_BYTES")
+    if active_template:
+        template_source = BytesIO(active_template)
+    else:
+        template_source = os.path.join(
+            os.path.dirname(__file__),
+            "static",
+            f"audit_presentation_{brand_key}.pptx",
+        )
+        if not os.path.exists(template_source):
+            raise FileNotFoundError(f"Не найден шаблон презентации: {template_source}")
     replacements = build_audit_presentation_replacements(
         c_info,
         results,
         final_score,
         it_maturity_score,
     )
-    return render_audit_presentation_template(template_path, replacements)
+    return render_audit_presentation_template(template_source, replacements)
 
 
 # --- Отчет ---
@@ -11563,6 +11654,8 @@ if "presentation_status" not in st.session_state:
     st.session_state.presentation_status = ""
 if "telegram_status" not in st.session_state:
     st.session_state.telegram_status = ""
+if "crm_delivery_status" not in st.session_state:
+    st.session_state.crm_delivery_status = ""
 if "generation_attempt_started_at" not in st.session_state:
     st.session_state.generation_attempt_started_at = None
 if "generation_error_message" not in st.session_state:
@@ -11579,7 +11672,7 @@ def render_generation_failure_state():
     render_generation_guard(False)
     message = st.session_state.get("generation_error_message") or (
         "Сервис формирования экспертного заключения временно недоступен. "
-        "Презентация не сформирована. "
+        "Заключение не сформировано. "
         "Попробуйте повторить позже."
     )
     st.error(message)
@@ -11757,7 +11850,7 @@ if validation_errors:
 # КНОПКА ЗАПУСКА ПРОЦЕССА
 # Она активна только тогда, когда процесс еще не запущен
 st.markdown("""
-Нажимая «Сформировать презентацию аудита», вы даете согласие
+Нажимая «Сформировать заключение по аудиту», вы даете согласие
 на обработку персональных данных в соответствии с
 <a href="https://drive.google.com/file/d/1ypEIH9_ePGo3elkR2ifLFBulD5CAFOfs/view?usp=sharing" target="_blank">
 Политикой конфиденциальности
@@ -11767,7 +11860,7 @@ if st.session_state.generation_state == "idle":
     if st.session_state.generation_error_message:
         st.error(st.session_state.generation_error_message)
     if st.button(
-        "Сформировать презентацию аудита",
+        "Сформировать заключение по аудиту",
         disabled=len(validation_errors) > 0,
         key="presentation_generate",
         type="primary",
@@ -11785,7 +11878,7 @@ if st.session_state.generation_state == "idle":
         alert_placeholder.markdown(
             """
             <div class="analysis-status-panel">
-                <div class="analysis-status-title">Формируется презентация аудита</div>
+                <div class="analysis-status-title">Формируется экспертное заключение</div>
                 Выполняется нормализация данных, расчет зрелости и сборка рекомендаций. Это может занять до 4 минут.
                 <div class="page-lock-note">Не закрывайте и не обновляйте страницу до завершения формирования.</div>
             </div>
@@ -11805,7 +11898,7 @@ if st.session_state.generation_state == "idle":
             "Построение доменов безопасности...",
             "Глубокий анализ рисков...",
             "Формирование управленческого резюме...",
-            "Генерация экспертной презентации...",
+            "Сборка клиентского заключения...",
             "Финализация артефактов..."
         ]
 
@@ -11883,13 +11976,13 @@ if st.session_state.generation_state == "heavy_ai":
         st.session_state.generation_state = "ai_failed"
         st.session_state.generation_attempt_started_at = None
         st.session_state.generation_error_message = (
-            "Формирование презентации превысило допустимое время. Попробуйте повторить позже."
+            "Формирование заключения превысило допустимое время. Попробуйте повторить позже."
         )
         render_generation_failure_state()
 
     generation_panel = st.empty()
     with generation_panel.container():
-        render_generation_live_panel("Идет глубокий анализ и сборка презентации", active_step=4)
+        render_generation_live_panel("Идет глубокий анализ и сборка заключения", active_step=4)
 
     if not st.session_state.telegram_generation_started_sent:
         st.session_state.telegram_status = send_internal_telegram_message(
@@ -11947,7 +12040,7 @@ if st.session_state.generation_state == "heavy_ai":
                 st.session_state.cached_sales_report_bytes = None
                 st.session_state.cached_presentation_bytes = None
                 st.session_state.presentation_status = "error"
-                raise RuntimeError("AI quality gate rejected the customer presentation")
+                raise RuntimeError("AI quality gate rejected the customer report")
 
             sales_report_bytes, telegram_sales = make_internal_sales_excel(
                 client_info,
@@ -11957,22 +12050,33 @@ if st.session_state.generation_state == "heavy_ai":
             )
             st.session_state.cached_report_bytes = report_bytes
             st.session_state.cached_sales_report_bytes = sales_report_bytes
-            try:
-                st.session_state.cached_presentation_bytes = make_audit_presentation(
-                    client_info,
-                    results,
-                    f_score,
-                    it_maturity_score,
-                )
-                st.session_state.presentation_status = "ok"
-            except Exception as presentation_exc:
+            crm_needs_presentation = (
+                str(RUNTIME_SETTINGS.get("active_provider", "off")).lower() == "amocrm"
+            )
+            customer_needs_presentation = CUSTOMER_DELIVERY_FORMAT in {"pptx", "both"}
+            if customer_needs_presentation or crm_needs_presentation:
+                try:
+                    st.session_state.cached_presentation_bytes = make_audit_presentation(
+                        client_info,
+                        results,
+                        f_score,
+                        it_maturity_score,
+                    )
+                    st.session_state.presentation_status = "ok"
+                except Exception as presentation_exc:
+                    st.session_state.cached_presentation_bytes = None
+                    st.session_state.presentation_status = "error"
+                    send_internal_telegram_message(
+                        f"[{get_app_instance_label()}] Презентация не сформирована: "
+                        f"{redact_secret(presentation_exc, TOKEN)}"
+                    )
+                    if customer_needs_presentation:
+                        raise RuntimeError(
+                            "Не удалось сформировать клиентскую презентацию"
+                        ) from presentation_exc
+            else:
                 st.session_state.cached_presentation_bytes = None
-                st.session_state.presentation_status = "error"
-                send_internal_telegram_message(
-                    f"[{get_app_instance_label()}] Презентация не сформирована: "
-                    f"{redact_secret(presentation_exc, TOKEN)}"
-                )
-                raise RuntimeError("Не удалось сформировать клиентскую презентацию") from presentation_exc
+                st.session_state.presentation_status = "not_required"
         except Exception as exc:
             if not ai_failure_notified:
                 st.session_state.telegram_status = send_internal_telegram_message(
@@ -11986,7 +12090,7 @@ if st.session_state.generation_state == "heavy_ai":
             st.session_state.generation_attempt_started_at = None
             st.session_state.generation_error_message = (
                 "Сервис формирования экспертного заключения временно недоступен. "
-                "Презентация не сформирована. "
+                "Заключение не сформировано. "
                 "Попробуйте повторить позже."
             )
             generation_panel.empty()
@@ -12004,54 +12108,127 @@ if st.session_state.generation_state == "heavy_ai":
                 )
             sales_digest = "\n".join(sales_lines) if sales_lines else "Нет явных продуктовых триггеров, нужен экспертный разбор."
 
-            telegram_text = build_telegram_lead_text(
-                client_info,
-                f_score,
-                sales_digest
-            )
-            telegram_send_node(
-                TOKEN,
-                "sendMessage",
-                {"chat_id": CHAT_ID, "text": telegram_text},
-                timeout_seconds=8
-            )
+            template_values = {
+                "app": get_app_instance_label(),
+                "company": client_info["Наименование компании"],
+            }
+            if bool(get_runtime_setting("telegram_send_lead_summary", True)):
+                telegram_text = build_telegram_lead_text(client_info, f_score, sales_digest)
+                telegram_send_node(
+                    TOKEN,
+                    "sendMessage",
+                    {"chat_id": CHAT_ID, "text": telegram_text},
+                    timeout_seconds=8
+                )
 
-            telegram_send_node(
-                TOKEN,
-                "sendDocument",
-                {
-                    "chat_id": CHAT_ID,
-                    "caption": f"[{get_app_instance_label()}] Sales playbook: {client_info['Наименование компании']}"
-                },
-                files=[{
-                    "field": "document",
-                    "filename": f"Sales_Playbook_{client_info['Наименование компании']}.xlsx",
-                    "bytes": sales_report_bytes,
-                    "suffix": ".xlsx",
-                }],
-                timeout_seconds=15
-            )
+            if bool(get_runtime_setting("telegram_send_sales_playbook", True)):
+                sales_caption = render_message_template(
+                    get_runtime_setting(
+                        "telegram_sales_caption",
+                        "[{app}] Sales playbook: {company}",
+                    ),
+                    template_values,
+                )
+                telegram_send_node(
+                    TOKEN,
+                    "sendDocument",
+                    {"chat_id": CHAT_ID, "caption": sales_caption},
+                    files=[{
+                        "field": "document",
+                        "filename": f"Sales_Playbook_{client_info['Наименование компании']}.xlsx",
+                        "bytes": sales_report_bytes,
+                        "suffix": ".xlsx",
+                    }],
+                    timeout_seconds=15
+                )
 
-            telegram_send_node(
-                TOKEN,
-                "sendDocument",
-                {
-                    "chat_id": CHAT_ID,
-                    "caption": f"[{get_app_instance_label()}] Клиентская презентация: {client_info['Наименование компании']}"
-                },
-                files=[{
-                    "field": "document",
-                    "filename": f"Audit_Presentation_{brand_file_label}_{client_info['Наименование компании']}.pptx",
-                    "bytes": st.session_state.cached_presentation_bytes,
-                    "suffix": ".pptx",
-                }],
-                timeout_seconds=20
-            )
+            if bool(get_runtime_setting("telegram_send_customer_report", True)):
+                customer_caption = render_message_template(
+                    get_runtime_setting(
+                        "telegram_customer_caption",
+                        "[{app}] Клиентское заключение: {company}",
+                    ),
+                    template_values,
+                )
+                customer_documents = []
+                if CUSTOMER_DELIVERY_FORMAT in {"xlsx", "both"}:
+                    customer_documents.append({
+                        "filename": f"Audit_{brand_file_label}_{client_info['Наименование компании']}.xlsx",
+                        "bytes": report_bytes,
+                        "suffix": ".xlsx",
+                        "label": "Excel",
+                    })
+                if (
+                    CUSTOMER_DELIVERY_FORMAT in {"pptx", "both"}
+                    and st.session_state.cached_presentation_bytes
+                ):
+                    customer_documents.append({
+                        "filename": f"Audit_Presentation_{brand_file_label}_{client_info['Наименование компании']}.pptx",
+                        "bytes": st.session_state.cached_presentation_bytes,
+                        "suffix": ".pptx",
+                        "label": "Презентация",
+                    })
+                for customer_document in customer_documents:
+                    document_caption = customer_caption
+                    if len(customer_documents) > 1:
+                        document_caption = f"{customer_caption} | {customer_document['label']}"
+                    telegram_send_node(
+                        TOKEN,
+                        "sendDocument",
+                        {"chat_id": CHAT_ID, "caption": document_caption},
+                        files=[{
+                            "field": "document",
+                            "filename": customer_document["filename"],
+                            "bytes": customer_document["bytes"],
+                            "suffix": customer_document["suffix"],
+                        }],
+                        timeout_seconds=20
+                    )
             st.session_state.telegram_status = "ok"
         except Exception as exc:
             st.session_state.telegram_status = f"Telegram не отправлен: {redact_secret(exc, TOKEN)}"
     else:
         st.session_state.telegram_status = "Telegram не отправлен: не найдены TELEGRAM_TOKEN или TELEGRAM_CHAT_ID."
+
+    crm_artifacts = []
+    crm_company_name = str(client_info.get("Наименование компании", "") or "").strip()
+    crm_file_company = re.sub(r'[\\/:*?"<>|]+', "_", crm_company_name) or "Компания"
+    if st.session_state.cached_presentation_bytes:
+        crm_artifacts.append(
+            DeliveryArtifact(
+                filename=f"Автоматический аудит - {crm_file_company}.pptx",
+                data=st.session_state.cached_presentation_bytes,
+                content_type=(
+                    "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+                ),
+            )
+        )
+    if sales_report_bytes:
+        crm_artifacts.append(
+            DeliveryArtifact(
+                filename=f"Sales Playbook - {crm_file_company}.xlsx",
+                data=sales_report_bytes,
+                content_type=(
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                ),
+            )
+        )
+    crm_result = deliver_audit_to_active_crm(
+        get_app_secret,
+        RUNTIME_SETTINGS,
+        client_info=client_info,
+        security_maturity=f_score,
+        it_maturity=it_maturity_score,
+        source_app=get_app_instance_label(),
+        priorities=telegram_sales,
+        artifacts=crm_artifacts,
+    )
+    st.session_state.crm_delivery_status = crm_result.message
+    if crm_result.status in {"error", "partial", "skipped"}:
+        send_internal_telegram_message(
+            f"[{get_app_instance_label()}] CRM {crm_result.status}: "
+            f"{redact_secret(crm_result.message, TOKEN)}"
+        )
 
     # Переключаем статус в финал
     st.session_state.generation_state = "finalized"
@@ -12066,10 +12243,44 @@ if st.session_state.generation_state == "ai_failed":
 # --- СЦЕНАРИЙ 4: ВЫВОД ГОТОВОГО РЕЗУЛЬТАТА ---
 if st.session_state.generation_state == "finalized":
 
-    st.success("🎉 Экспертная презентация сформирована и проверена системой контроля качества Khalil Consulting!")
+    st.success("🎉 Экспертное заключение сформировано и проверено системой контроля качества Khalil Consulting!")
 
     brand_file_label = "BTG" if presentation_brand_key() == "btg" else "Khalil"
-    if st.session_state.cached_presentation_bytes:
+    if (
+        CUSTOMER_DELIVERY_FORMAT == "both"
+        and st.session_state.cached_report_bytes
+        and st.session_state.cached_presentation_bytes
+    ):
+        excel_col, presentation_col = st.columns(2)
+        excel_col.download_button(
+            label="Скачать заключение в Excel",
+            data=st.session_state.cached_report_bytes,
+            file_name=f"Audit_{brand_file_label}_{client_info['Наименование компании']}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="customer_excel_download",
+            type="secondary",
+            use_container_width=True,
+        )
+        presentation_col.download_button(
+            label="Скачать презентацию",
+            data=st.session_state.cached_presentation_bytes,
+            file_name=f"Audit_Presentation_{brand_file_label}_{client_info['Наименование компании']}.pptx",
+            mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            key="presentation_download",
+            type="secondary",
+            use_container_width=True,
+        )
+    elif CUSTOMER_DELIVERY_FORMAT == "xlsx" and st.session_state.cached_report_bytes:
+        st.download_button(
+            label="Скачать заключение по аудиту",
+            data=st.session_state.cached_report_bytes,
+            file_name=f"Audit_{brand_file_label}_{client_info['Наименование компании']}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="presentation_download",
+            type="secondary",
+            use_container_width=False,
+        )
+    elif st.session_state.cached_presentation_bytes:
         st.download_button(
             label="Скачать заключение по аудиту",
             data=st.session_state.cached_presentation_bytes,
@@ -12080,16 +12291,17 @@ if st.session_state.generation_state == "finalized":
             use_container_width=False,
         )
     elif st.session_state.presentation_status == "error":
-        st.error("Не удалось сформировать презентацию. Попробуйте повторить позже.")
+        st.error("Не удалось сформировать заключение. Попробуйте повторить позже.")
 
     # Кнопка для сброса состояния, если пользователь захочет перегенерировать отчет
-    if st.button("Сформировать новую презентацию"):
+    if st.button("Сформировать новое заключение"):
         st.session_state.generation_state = "idle"
         st.session_state.cached_report_bytes = None
         st.session_state.cached_sales_report_bytes = None
         st.session_state.cached_presentation_bytes = None
         st.session_state.presentation_status = ""
         st.session_state.telegram_status = ""
+        st.session_state.crm_delivery_status = ""
         st.session_state.ai_last_error = ""
         st.session_state.report_shortened_last = False
         st.session_state.generation_attempt_started_at = None

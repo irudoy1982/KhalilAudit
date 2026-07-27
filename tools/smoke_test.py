@@ -45,7 +45,7 @@ def check_version() -> None:
     text = read_text(APP)
     match = re.search(r'APP_VERSION\s*=\s*"([^"]+)"', text)
     assert_true(match is not None, "APP_VERSION is missing")
-    assert_true(match.group(1) == "12.33", f"Unexpected APP_VERSION: {match.group(1)}")
+    assert_true(match.group(1) == "14.1", f"Unexpected APP_VERSION: {match.group(1)}")
 
 
 def check_forced_light_theme() -> None:
@@ -60,6 +60,42 @@ def check_forced_light_theme() -> None:
         "@media (max-width: 900px)" in app_text and "position: sticky" in app_text,
         "Touch devices must use the viewport-safe sticky draft toolbar",
     )
+
+
+def check_x3_admin_console() -> None:
+    admin_module = ROOT / "crm_admin.py"
+    store_module = ROOT / "crm_store.py"
+    migration = ROOT / "db" / "001_crm_admin.sql"
+    asset_migration = ROOT / "db" / "002_admin_assets.sql"
+    user_migration = ROOT / "db" / "003_admin_users.sql"
+    assets_module = ROOT / "crm_assets.py"
+    setup = ROOT / "ADMIN_SETUP.md"
+    for path in (
+        admin_module,
+        store_module,
+        migration,
+        asset_migration,
+        user_migration,
+        assets_module,
+        setup,
+    ):
+        assert_true(path.exists(), f"Missing X3 admin artifact: {path.name}")
+    app_text = read_text(APP)
+    admin_text = read_text(admin_module)
+    store_text = read_text(store_module)
+    migration_text = read_text(migration)
+    assert_true("render_crm_admin(APP_VERSION" in app_text, "Admin console is not connected")
+    assert_true("CUSTOMER_DELIVERY_FORMAT" in app_text, "Customer format switch is missing")
+    assert_true("telegram_diagnostics_enabled" in app_text, "Telegram diagnostic switch is missing")
+    assert_true("crm_admin_authenticated" in admin_text, "Admin authentication is missing")
+    assert_true('"active_provider": "off"' in store_text, "CRM must default to off")
+    assert_true("vault.create_secret" in migration_text, "Encrypted CRM secret storage is missing")
+    assert_true("enable row level security" in migration_text.lower(), "CRM tables require RLS")
+    assert_true("load_runtime_asset_bytes" in app_text, "Managed assets are not connected")
+    assert_true("_render_users" in admin_text, "Admin user management is missing")
+    assert_true("ADMIN_MAX_FAILED_ATTEMPTS" in admin_text, "Admin login lockout is missing")
+    assert_true("audit-admin-assets" in read_text(asset_migration), "Private asset bucket is missing")
+    assert_true("admin_users" in read_text(user_migration), "Admin user table is missing")
 
 
 def check_customer_changelog() -> None:
@@ -220,8 +256,19 @@ def check_static_hooks() -> None:
     assert_true('div[data-testid="stElementContainer"]:has(.st-key-presentation_download)' in text, "Presentation download centering hook is missing")
     assert_true("st-key-presentation_generate" in text, "Presentation generation styling hook is missing")
     assert_true('key="presentation_generate"' in text, "Presentation generation button key is missing")
-    assert_true('"suffix": ".pptx"' in text and "Audit_Presentation_" in text, "Telegram presentation attachment is missing")
-    assert_true("AI quality gate rejected the customer presentation" in text, "Customer presentation is not blocked on AI failure")
+    assert_true(
+        '"suffix": ".pptx"' in text and "Audit_Presentation_" in text,
+        "Telegram presentation attachment is missing",
+    )
+    assert_true(
+        '"suffix": ".xlsx"' in text and "cached_report_bytes" in text,
+        "Telegram Excel attachment is missing",
+    )
+    assert_true(
+        'CUSTOMER_DELIVERY_FORMAT == "both"' in text,
+        "Combined customer delivery mode is missing",
+    )
+    assert_true("AI quality gate rejected the customer report" in text, "Customer report is not blocked on AI failure")
     assert_true("Недостаточно подтвержденных рекомендаций для клиентской презентации" not in text, "Fixed recommendation threshold must stay removed")
     assert_true("Область для верификации" not in text, "Verification placeholder must not be emitted")
     assert_true("groq_prompt = f\"\"\"" in text, "Compact Groq prompt is missing")
@@ -823,6 +870,7 @@ def main() -> None:
         check_compile,
         check_version,
         check_forced_light_theme,
+        check_x3_admin_console,
         check_customer_changelog,
         check_selectbox_contract,
         check_portfolio,
