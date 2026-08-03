@@ -3,6 +3,12 @@
 This changelog is intended for production release notes that can be shown to customers.
 Keep this file focused only on customer-visible questionnaire and report changes.
 
+## v14.2.7
+
+- Aligned report conclusions and presentations across hosted and self-hosted deployments.
+- Improved assessment of mature controls: effectiveness and evidence are checked without recommending duplicate implementations.
+- Refined banking, PCI DSS, continuity, recovery, and regulatory references.
+
 ## v14.2.6
 
 - Added an “Отчет” shortcut once the questionnaire is valid, so users can jump directly to report generation.
