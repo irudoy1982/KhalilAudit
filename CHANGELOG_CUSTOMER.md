@@ -3,7 +3,7 @@
 This changelog is intended for production release notes that can be shown to customers.
 Keep this file focused only on customer-visible questionnaire and report changes.
 
-## v14.2.4
+## v14.2.5
 
 - Added an “Отчет” shortcut to the audit navigator once the conclusion is ready.
 - Improved fact consistency for mature IAM, WAF, backup, and disaster-recovery controls.

@@ -121,7 +121,7 @@ def get_app_secret(name, default=None):
 
 
 APP_INSTANCE_DEFAULT = "Khalil"
-APP_VERSION = "14.2.4"
+APP_VERSION = "14.2.5"
 
 
 def get_app_instance_label():
@@ -9009,25 +9009,20 @@ def build_target_operating_model(results, context, report_risks=None):
     return model[:7]
 
 
-def build_management_decisions(results, context):
-    decisions = [
-        "Утвердить владельцев направлений: доступы, рабочие места, инфраструктура, backup/DR, web-периметр.",
-        "Провести пилот EDR/MDR на критичных группах пользователей и серверах, затем принять решение о масштабировании.",
-        "Определить минимальный SOC/MSSP-scope: NGFW, AD/учетки, серверы, endpoint, backup, почта и web.",
-        "Согласовать регулярный отчет для руководства: остаточные риски, выполненные меры, исключения, SLA закрытия критичных уязвимостей.",
-    ]
-    if is_enabled(results.get("MFA")):
-        decisions.insert(
-            1,
-            "Запустить 30-дневный план: проверить покрытие MFA по критичным доступам, закрыть устаревшие ОС, формализовать patch management и проверить backup-восстановление."
-        )
-    else:
-        decisions.insert(
-            1,
-            "Запустить 30-дневный план: включить MFA для критичных доступов, закрыть устаревшие ОС, формализовать patch management и проверить backup-восстановление."
-        )
-    if context.get("has_development"):
-        decisions.append("Добавить требования AppSec в процесс релизов: SAST/DAST, проверка зависимостей и критерии допуска в продуктив.")
+def build_management_decisions(results, context, report_risks=None, roadmap_items=None):
+    decisions = []
+    for item in (roadmap_items or [])[:4]:
+        action = str(item.get("action", "")).strip()
+        if action and action not in decisions:
+            decisions.append(action)
+    if not decisions:
+        for item in (report_risks or [])[:4]:
+            recommendation = str(item.get("recommendation", "")).strip()
+            if recommendation and recommendation not in decisions:
+                decisions.append(recommendation)
+    decisions.append(
+        "Назначить владельцев подтвержденных рисков и ежемесячно контролировать сроки, исключения и измеримые результаты."
+    )
     return decisions[:6]
 
 
@@ -11756,21 +11751,13 @@ def render_audit_cockpit(client_info, results, validation_errors, final_score, i
                 unsafe_allow_html=True
             )
 
-    report_available = (
-        st.session_state.get("generation_state") == "finalized"
-        and bool(
-            st.session_state.get("cached_report_bytes")
-            or st.session_state.get("cached_presentation_bytes")
-        )
+def render_ready_report_sidebar_link():
+    st.sidebar.markdown("#### Результат")
+    st.sidebar.markdown(
+        '<a class="sidebar-step sidebar-step-link" href="#audit-report" title="Перейти к готовому отчету">'
+        '<span class="sidebar-dot green"></span><span><strong>Отчет</strong></span></a>',
+        unsafe_allow_html=True,
     )
-    if report_available:
-        st.sidebar.markdown("#### Результат")
-        st.sidebar.markdown(
-            '<a class="sidebar-step sidebar-step-link" href="#audit-report" title="Перейти к готовому отчету">'
-            '<span class="sidebar-dot green"></span><span><strong>Отчет</strong></span>'
-            '</a>',
-            unsafe_allow_html=True,
-        )
 
 
 def render_analysis_preview(results, final_score):
@@ -12514,6 +12501,7 @@ if st.session_state.generation_state == "ai_failed":
 # --- СЦЕНАРИЙ 4: ВЫВОД ГОТОВОГО РЕЗУЛЬТАТА ---
 if st.session_state.generation_state == "finalized":
 
+    render_ready_report_sidebar_link()
     st.markdown('<div id="audit-report"></div>', unsafe_allow_html=True)
     st.success("🎉 Экспертное заключение сформировано и проверено системой контроля качества Khalil Consulting!")
 
