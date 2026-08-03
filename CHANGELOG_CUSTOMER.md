@@ -3,6 +3,12 @@
 This changelog is intended for production release notes that can be shown to customers.
 Keep this file focused only on customer-visible questionnaire and report changes.
 
+## v14.2.4
+
+- Added an “Отчет” shortcut to the audit navigator once the conclusion is ready.
+- Improved fact consistency for mature IAM, WAF, backup, and disaster-recovery controls.
+- Added a concise explanation of which confirmed controls contribute to each domain score.
+
 ## v12.33
 
 Status: stable production release.
