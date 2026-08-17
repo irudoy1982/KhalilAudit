@@ -3,6 +3,12 @@
 This changelog is intended for production release notes that can be shown to customers.
 Keep this file focused only on customer-visible questionnaire and report changes.
 
+## v14.2.10
+
+- Kept conclusions consistent with confirmed monitoring, recovery objectives, and restore testing.
+- Improved sentence completeness and capitalization in presentation recommendations.
+- Replaced company-size labels with neutral infrastructure-profile wording.
+
 ## v14.2.9
 
 - Pinned draft save and sharing controls to the bottom of phone screens.
