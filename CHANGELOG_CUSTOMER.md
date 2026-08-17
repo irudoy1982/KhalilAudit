@@ -3,6 +3,13 @@
 This changelog is intended for production release notes that can be shown to customers.
 Keep this file focused only on customer-visible questionnaire and report changes.
 
+## v14.2.9
+
+- Pinned draft save and sharing controls to the bottom of phone screens.
+- Distinguished validation of existing security controls from duplicate implementation recommendations.
+- Allowed mature questionnaires with no confirmed new gaps to produce an assurance-focused conclusion.
+- Prevented unconfirmed configuration-management and incident-response assumptions from appearing as established audit findings.
+
 ## v14.2.8
 
 - Added structured backup and recovery details: storage locations, immutable copies, restore testing, RTO/RPO, DR plans, and recovery sites.
